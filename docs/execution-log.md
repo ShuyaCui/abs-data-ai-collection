@@ -25,3 +25,4 @@
 - Moved the native fallback parse out of the CLI process and added CPU/output-size limits plus a wall-clock timeout. Container-level network isolation and memory limits remain production deployment requirements.
 - Added the optional `parser` dependency set with Docling 2.121.0. RapidOCR local weights downloaded successfully; Docling's table-model download is incomplete in the current network environment, so geometry/table validation remains pending.
 - Verified the Docling native-text adapter with OCR and table reconstruction disabled: the 13-page fourth trustee report produced 725 coordinate-bearing blocks. The unavailable table-model remains required before emitting table-cell evidence.
+- Added a fixed-DSH headless policy patch that disables general shell, filesystem, web and subagent tools, forces read-only mode and disables telemetry egress. Dedicated local document-worker tools remain the next Harness integration step.
