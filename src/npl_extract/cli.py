@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import asdict
+from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 
 from npl_extract.intake import inspect_pdf
-from npl_extract.contracts import ExtractionFact
+from npl_extract.contracts import ExtractionFact, ReviewAction
 from npl_extract.extract import (
     extract_issuance_announcement_facts,
     extract_issuance_result_ocr_facts,
@@ -16,7 +18,8 @@ from npl_extract.extract import (
     extract_trustee_report_facts,
 )
 from npl_extract.parsers import parse_native_pdf_isolated, parser_identity
-from npl_extract.pipeline import persist_facts, persist_page_artifacts, stage_verified_pdf
+from npl_extract.pipeline import persist_facts, persist_page_artifacts, persist_review_decision, stage_verified_pdf
+from npl_extract.review import review_fact
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -46,6 +49,16 @@ def main(argv: list[str] | None = None) -> int:
     export_command.add_argument("--template", type=Path, required=True)
     export_command.add_argument("--facts", type=Path, nargs="+", required=True)
     export_command.add_argument("--output", type=Path, required=True)
+    review_command = commands.add_parser("review", help="append one immutable human decision for a candidate fact")
+    review_command.add_argument("--document-sha256", required=True)
+    review_command.add_argument("--facts", type=Path, nargs="+", required=True)
+    review_command.add_argument("--fact-id", required=True)
+    review_command.add_argument("--action", choices=[action.value for action in ReviewAction], required=True)
+    review_command.add_argument("--decision-id", required=True)
+    review_command.add_argument("--reviewer-id", required=True)
+    review_command.add_argument("--reason-code", required=True)
+    review_command.add_argument("--corrected-fact", type=Path)
+    review_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
     args = parser.parse_args(argv)
     if args.command == "export":
         from npl_extract.export import export_facts
@@ -57,6 +70,29 @@ def main(argv: list[str] | None = None) -> int:
             print(_json({"error": str(error)}))
             return 2
         print(_json({"output": str(args.output), "fact_count": len(facts)}))
+        return 0
+    if args.command == "review":
+        try:
+            candidates = [fact for fact in _load_review_facts(args.document_sha256, args.facts, args.runs_dir) if fact.fact_id == args.fact_id]
+            if len(candidates) != 1:
+                raise ValueError("review requires exactly one candidate fact ID")
+            corrections = _load_review_facts(args.document_sha256, [args.corrected_fact], args.runs_dir) if args.corrected_fact else []
+            if len(corrections) > 1:
+                raise ValueError("review accepts at most one corrected fact")
+            decision = review_fact(
+                candidates[0],
+                action=ReviewAction(args.action),
+                decision_id=args.decision_id,
+                reviewer_id=args.reviewer_id,
+                reason_code=args.reason_code,
+                decided_at=datetime.now(UTC),
+                corrected_fact=corrections[0] if corrections else None,
+            )
+            persisted = persist_review_decision(args.document_sha256, decision, args.runs_dir)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            print(_json({"error": str(error)}))
+            return 2
+        print(_json({**persisted.decision.model_dump(mode="json"), "path": str(persisted.path), "reused": persisted.reused}))
         return 0
     if args.command == "extract-trustee" and not args.entity_key.startswith("report:"):
         print(_json([]))
@@ -111,6 +147,20 @@ def _load_facts(paths: list[Path]) -> list[ExtractionFact]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def _load_review_facts(document_sha256: str, paths: list[Path], runs_dir: Path) -> list[ExtractionFact]:
+    fact_dir = (runs_dir / document_sha256 / "facts").resolve()
+    facts = []
+    for path in paths:
+        resolved = path.resolve()
+        if resolved.parent != fact_dir or resolved.suffix != ".jsonl":
+            raise ValueError("review facts must be canonical artifacts for the specified document")
+        content = resolved.read_bytes()
+        if sha256(content).hexdigest() != resolved.stem:
+            raise ValueError("review fact artifact is not content-addressed")
+        facts.extend(ExtractionFact.model_validate(json.loads(line)) for line in content.decode("utf-8").splitlines() if line.strip())
+    return facts
 
 
 def _page_range(value: str) -> tuple[int, int]:

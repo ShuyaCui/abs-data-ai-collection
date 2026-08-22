@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
@@ -16,6 +16,12 @@ class FactStatus(str, Enum):
     NOT_DISCLOSED = "not_disclosed"
     AMBIGUOUS = "ambiguous"
     PENDING_DEFINITION = "pending_definition"
+
+
+class ReviewAction(str, Enum):
+    ACCEPT = "accept"
+    CORRECT = "correct"
+    REJECT = "reject"
 
 
 class ValuePolicy(str, Enum):
@@ -100,6 +106,28 @@ class ExtractionFact(BaseModel):
         if prefix and not self.entity_key.startswith(prefix):
             label = _ENTITY_KEY_LABELS.get(contract.entity_grain, contract.entity_grain)
             raise ValueError(f"{contract.entity_grain} facts require a {label} key")
+        return self
+
+
+class ReviewDecision(BaseModel):
+    decision_id: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")
+    candidate_fact_id: str
+    action: ReviewAction
+    reviewer_id: str = Field(min_length=1)
+    reason_code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{2,63}$")
+    decided_at: datetime
+    resolved_fact: ExtractionFact | None = None
+
+    @model_validator(mode="after")
+    def enforce_review_contract(self) -> ReviewDecision:
+        if self.decided_at.tzinfo is None or self.decided_at.utcoffset() is None:
+            raise ValueError("review decisions require a timezone-aware timestamp")
+        if self.action is ReviewAction.REJECT and self.resolved_fact is not None:
+            raise ValueError("rejected facts cannot have a resolved fact")
+        if self.action in {ReviewAction.ACCEPT, ReviewAction.CORRECT} and (
+            self.resolved_fact is None or not self.resolved_fact.confirmed
+        ):
+            raise ValueError("accepted and corrected facts require a confirmed resolved fact")
         return self
 
 

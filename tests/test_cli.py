@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 
@@ -293,3 +294,126 @@ def test_export_command_rejects_a_jsonl_fact_with_the_wrong_entity_grain(tmp_pat
 
     assert exit_code == 2
     assert "product key" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_review_command_appends_an_accepted_fact_decision(tmp_path: Path, capsys) -> None:
+    document_sha256 = "a" * 64
+    content = (
+        json.dumps(
+            {
+                "fact_id": "asset-name",
+                "field_id": "asset_full_name",
+                "entity_key": "product:test",
+                "status": "disclosed",
+                "value": "臻粹不良资产支持证券",
+                "evidence": [
+                    {
+                        "evidence_id": "p001:b001",
+                        "artifact_scope": "pypdf-all",
+                        "document_name": "发行公告.pdf",
+                        "physical_page": 1,
+                        "locator": "公告标题",
+                        "exact_text": "臻粹不良资产支持证券发行公告",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+    runs_dir = tmp_path / "runs"
+    candidates = runs_dir / document_sha256 / "facts" / f"{sha256(content.encode()).hexdigest()}.jsonl"
+    candidates.parent.mkdir(parents=True)
+    candidates.write_text(content)
+
+    exit_code = main(
+        [
+            "review",
+            "--document-sha256",
+            document_sha256,
+            "--facts",
+            str(candidates),
+            "--fact-id",
+            "asset-name",
+            "--action",
+            "accept",
+            "--decision-id",
+            "review-001",
+            "--reviewer-id",
+            "business-owner:alice",
+            "--reason-code",
+            "VALUE_AND_EVIDENCE_CONFIRMED",
+            "--runs-dir",
+            str(runs_dir),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["action"] == "accept"
+    assert output["resolved_fact"]["confirmed"] is True
+    assert (runs_dir / document_sha256 / "reviews" / "review-001.json").is_file()
+
+
+def test_review_command_rejects_a_candidate_from_another_document(tmp_path: Path, capsys) -> None:
+    runs_dir = tmp_path / "runs"
+    candidates = runs_dir / ("b" * 64) / "facts" / f"{sha256(b'').hexdigest()}.jsonl"
+    candidates.parent.mkdir(parents=True)
+    candidates.write_text("")
+
+    exit_code = main(
+        [
+            "review",
+            "--document-sha256",
+            "a" * 64,
+            "--facts",
+            str(candidates),
+            "--fact-id",
+            "asset-name",
+            "--action",
+            "accept",
+            "--decision-id",
+            "review-002",
+            "--reviewer-id",
+            "business-owner:alice",
+            "--reason-code",
+            "VALUE_AND_EVIDENCE_CONFIRMED",
+            "--runs-dir",
+            str(runs_dir),
+        ]
+    )
+
+    assert exit_code == 2
+    assert "canonical" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_review_command_rejects_a_tampered_candidate_artifact(tmp_path: Path, capsys) -> None:
+    runs_dir = tmp_path / "runs"
+    candidates = runs_dir / ("a" * 64) / "facts" / f"{'b' * 64}.jsonl"
+    candidates.parent.mkdir(parents=True)
+    candidates.write_text("")
+
+    exit_code = main(
+        [
+            "review",
+            "--document-sha256",
+            "a" * 64,
+            "--facts",
+            str(candidates),
+            "--fact-id",
+            "asset-name",
+            "--action",
+            "accept",
+            "--decision-id",
+            "review-003",
+            "--reviewer-id",
+            "business-owner:alice",
+            "--reason-code",
+            "VALUE_AND_EVIDENCE_CONFIRMED",
+            "--runs-dir",
+            str(runs_dir),
+        ]
+    )
+
+    assert exit_code == 2
+    assert "content-addressed" in json.loads(capsys.readouterr().out)["error"]

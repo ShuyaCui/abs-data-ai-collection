@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from hashlib import sha256
 from pathlib import Path
 
-from npl_extract.contracts import ExtractionFact
+from npl_extract.contracts import ExtractionFact, ReviewDecision
 from npl_extract.parsers import PageContent, route_page
 
 
@@ -27,6 +27,13 @@ class PersistedArtifacts:
 class PersistedFacts:
     path: Path
     reused: bool
+
+
+@dataclass(frozen=True)
+class PersistedReviewDecision:
+    path: Path
+    reused: bool
+    decision: ReviewDecision
 
 
 def persist_page_artifacts(
@@ -93,6 +100,25 @@ def persist_facts(document_sha256: str, facts: list[ExtractionFact], output_root
             return PersistedFacts(path, reused=True)
         _atomic_write(path, content)
         return PersistedFacts(path, reused=False)
+
+
+def persist_review_decision(document_sha256: str, decision: ReviewDecision, output_root: Path) -> PersistedReviewDecision:
+    """Persist one review decision by stable ID without overwriting an earlier event."""
+    if not _SHA256.fullmatch(document_sha256):
+        raise ValueError("document_sha256 must be a lowercase SHA-256 digest")
+    content = json.dumps(decision.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":"))
+    path = output_root / document_sha256 / "reviews" / f"{decision.decision_id}.json"
+    with _document_lock(output_root, document_sha256):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_file():
+            stored = json.loads(path.read_text(encoding="utf-8"))
+            existing = {key: value for key, value in stored.items() if key != "decided_at"}
+            requested = {key: value for key, value in decision.model_dump(mode="json").items() if key != "decided_at"}
+            if existing == requested:
+                return PersistedReviewDecision(path, reused=True, decision=ReviewDecision.model_validate(stored))
+            raise ValueError("review decision ID already exists with a different payload")
+        _atomic_write(path, content)
+        return PersistedReviewDecision(path, reused=False, decision=decision)
 
 
 def stage_verified_pdf(path: Path, document_sha256: str, output_root: Path) -> Path:
