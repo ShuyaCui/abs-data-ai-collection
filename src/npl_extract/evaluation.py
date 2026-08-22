@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from npl_extract.contracts import EvidenceRef, ExtractionFact, FactInput, FactStatus, load_field_contracts
 
@@ -23,7 +23,7 @@ class GoldFact(BaseModel):
     field_id: str
     entity_key: str
     status: FactStatus
-    value: str | list[str] | None
+    value: str | StrictBool | list[str] | None
     effective_at: date | None
     evidence_ids: list[str]
 

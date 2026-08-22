@@ -198,3 +198,20 @@ def test_gold_json_schema_stays_aligned_with_field_contracts() -> None:
     schema = json.loads((Path(__file__).parents[1] / "evaluation" / "gold.schema.json").read_text())
 
     assert set(schema["properties"]["field_id"]["enum"]) == set(load_field_contracts())
+    boolean_rule = next(rule for rule in schema["allOf"] if rule.get("if", {}).get("properties", {}).get("field_id", {}).get("enum") == ["has_revolving_purchase", "large_non_diversified"])
+    assert {"type": "boolean"} in boolean_rule["then"]["properties"]["value"]["anyOf"]
+
+
+def test_gold_contract_rejects_numeric_boolean_coercion() -> None:
+    with pytest.raises(ValueError):
+        GoldFact(
+            case_id="case",
+            product_key="product:sample-a",
+            split=GoldSplit.DEVELOPMENT,
+            field_id="has_revolving_purchase",
+            entity_key="product:sample-a",
+            status=FactStatus.DISCLOSED,
+            value=0,
+            effective_at=None,
+            evidence_ids=["p090:b005"],
+        )

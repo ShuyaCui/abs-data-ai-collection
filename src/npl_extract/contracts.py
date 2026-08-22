@@ -6,7 +6,7 @@ from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StrictBool, model_validator
 
 
 class FactStatus(str, Enum):
@@ -73,7 +73,7 @@ class ExtractionFact(BaseModel):
     field_id: str
     entity_key: str
     status: FactStatus
-    value: str | list[str] | None = None
+    value: str | StrictBool | list[str] | None = None
     evidence: list[EvidenceRef] = Field(default_factory=list)
     effective_at: date | None = None
     rule_version: str | None = None
@@ -87,6 +87,10 @@ class ExtractionFact(BaseModel):
             raise ValueError("unknown field")
         if self.status not in contract.allowed_statuses:
             raise ValueError(f"field {self.field_id} does not allow status {self.status.value}")
+        if contract.value_type == "boolean" and self.value is not None and type(self.value) is not bool:
+            raise ValueError("boolean facts require a boolean value")
+        if contract.value_type != "boolean" and type(self.value) is bool:
+            raise ValueError("only boolean fields may carry a boolean value")
         if contract.value_type == "string[]" and self.value is not None and (
             not isinstance(self.value, list) or not self.value or not all(isinstance(item, str) and item for item in self.value)
         ):

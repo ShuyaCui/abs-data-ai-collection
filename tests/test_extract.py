@@ -6,6 +6,7 @@ from npl_extract.extract import (
     extract_issuance_result_ocr_facts,
     extract_prospectus_issue_amount_facts,
     extract_prospectus_market_facts,
+    extract_prospectus_revolving_purchase_fact,
     extract_prospectus_issue_rating_facts,
     extract_prospectus_first_interest_payment_facts,
     extract_trustee_report_facts,
@@ -74,6 +75,58 @@ def test_refuses_a_prospectus_block_that_repeats_the_issuance_route_statement() 
     pages = [PageContent(3, "", [Block("p003:b001", 3, statement + statement, None)])]
 
     assert extract_prospectus_market_facts(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
+
+
+def test_extracts_a_static_pool_as_no_revolving_purchase_with_split_evidence() -> None:
+    pages = [
+        PageContent(
+            90,
+            "",
+            [
+                Block("p090:b005", 90, "本次交易中的“资产池”将是一个静态池，即信托财产交付日后，“受托人”将不会", None),
+                Block("p090:b006", 90, "购买其他资产进入本次交易“资产池”或以其他资产替换已有资产。", None),
+            ],
+        )
+    ]
+
+    facts = extract_prospectus_revolving_purchase_fact(
+        pages, "臻粹2026年第二期不良资产支持证券发行说明书.pdf", "product:臻粹2026-2", "pypdf-all"
+    )
+
+    assert len(facts) == 1
+    assert facts[0].field_id == "has_revolving_purchase"
+    assert facts[0].value is False
+    assert [evidence.evidence_id for evidence in facts[0].evidence] == ["p090:b005", "p090:b006"]
+
+
+def test_refuses_static_pool_text_repeated_inside_one_evidence_pair() -> None:
+    pages = [
+        PageContent(
+            90,
+            "",
+            [
+                Block("p090:b005", 90, "资产池将是一个静态池，受托人将不会。资产池将是一个静态池，受托人将不会。", None),
+                Block("p090:b006", 90, "购买其他资产或以其他资产替换已有资产。购买其他资产或以其他资产替换已有资产。", None),
+            ],
+        )
+    ]
+
+    assert extract_prospectus_revolving_purchase_fact(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
+
+
+def test_refuses_a_complete_static_pool_statement_in_one_block_without_a_linked_second_block() -> None:
+    pages = [
+        PageContent(
+            90,
+            "",
+            [
+                Block("p090:b005", 90, "资产池将是一个静态池，受托人将不会购买其他资产或以其他资产替换已有资产。", None),
+                Block("p090:b006", 90, "这是不相关的后续段落。", None),
+            ],
+        )
+    ]
+
+    assert extract_prospectus_revolving_purchase_fact(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
 
 
 def test_extracts_only_unique_product_level_issue_amount_rows_from_the_prospectus() -> None:

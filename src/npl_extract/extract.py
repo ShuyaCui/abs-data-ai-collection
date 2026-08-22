@@ -503,6 +503,45 @@ def extract_prospectus_market_facts(
     ]
 
 
+def extract_prospectus_revolving_purchase_fact(
+    pages: list[PageContent], document_name: str, entity_key: str, artifact_scope: str
+) -> list[ExtractionFact]:
+    """Record `false` only for the complete static-pool non-purchase disclosure."""
+    if not _product_name(document_name, "发行说明书"):
+        return []
+    candidates = []
+    for page in pages:
+        if page.ocr_requested:
+            continue
+        for index in range(len(page.blocks) - 1):
+            evidence = page.blocks[index : index + 2]
+            first = re.sub(r"[\s“”]", "", evidence[0].exact_text)
+            second = re.sub(r"[\s“”]", "", evidence[1].exact_text)
+            if (
+                first.count("资产池将是一个静态池") == 1
+                and first.count("将不会") == 1
+                and second.count("购买其他资产") == 1
+                and second.count("以其他资产替换已有资产") == 1
+            ):
+                candidates.append((page, evidence))
+    if len(candidates) != 1:
+        return []
+    page, evidence_blocks = candidates[0]
+    return [
+        ExtractionFact(
+            fact_id=f"disclosed:has-revolving-purchase:{evidence_blocks[0].evidence_id}",
+            field_id="has_revolving_purchase",
+            entity_key=entity_key,
+            status=FactStatus.DISCLOSED,
+            value=False,
+            evidence=[
+                _evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "基础资产筛选标准/静态池及不购买资产", block.exact_text)
+                for block in evidence_blocks
+            ],
+        )
+    ]
+
+
 def extract_prospectus_issue_rating_facts(
     pages: list[PageContent], document_name: str, association_facts: list[ExtractionFact], artifact_scope: str
 ) -> list[ExtractionFact]:

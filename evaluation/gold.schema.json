@@ -10,7 +10,7 @@
     "field_id": {"enum": ["actual_financing_entity", "asset_full_name", "balance_all_tranches", "bond_type_level_1", "bond_type_level_3", "cashflow_collection_table", "chinabond_predicted_recovery_amount", "chinabond_predicted_recovery_rate", "cumulative_default_rate_definition", "cumulative_overdue_30_amount", "cumulative_overdue_90_amount", "first_interest_payment_date", "has_revolving_purchase", "initial_cutoff_date", "initial_pool_outstanding_principal_interest_fees", "interest_payment_frequency", "issuance_cashflow_forecast_agency", "issuance_method", "issue_amount_all_tranches", "issue_amount_mezzanine", "issue_amount_senior", "issue_amount_subordinated", "issue_rating", "large_non_diversified", "latest_report_date", "market", "maturity_date", "next_report_date", "npl_trustee_recovery_cash", "overdue_30_ratio", "overdue_90_ratio", "period_yield", "prepayment_rate", "report_update_frequency", "revolving_purchase_asset_total", "security_code", "static_pool_default_rate", "tranche_current_balance", "tranche_issue_amount", "tranche_level", "trustee_report_cumulative_default_rate", "unit_remaining_face_value"]},
     "entity_key": {"type": "string"},
     "status": {"enum": ["disclosed", "derived", "not_applicable", "not_disclosed", "ambiguous", "pending_definition"]},
-    "value": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}, {"type": "null"}]},
+    "value": {"anyOf": [{"type": "string"}, {"type": "boolean"}, {"type": "array", "items": {"type": "string"}}, {"type": "null"}]},
     "effective_at": {"anyOf": [{"type": "string", "format": "date"}, {"type": "null"}]},
     "evidence_ids": {"type": "array", "items": {"type": "string"}}
   },
@@ -18,6 +18,11 @@
     {
       "if": {"properties": {"value": {"not": {"type": "null"}}}, "required": ["value"]},
       "then": {"properties": {"evidence_ids": {"minItems": 1}}}
+    },
+    {
+      "if": {"properties": {"field_id": {"enum": ["has_revolving_purchase", "large_non_diversified"]}}, "required": ["field_id"]},
+      "then": {"properties": {"value": {"anyOf": [{"type": "boolean"}, {"type": "null"}]}}},
+      "else": {"properties": {"value": {"not": {"type": "boolean"}}}}
     }
   ],
   "additionalProperties": false

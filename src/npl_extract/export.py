@@ -72,5 +72,7 @@ def _sheet_name(entity_key: str, used_names: set[str]) -> str:
     return name
 
 
-def _export_value(value: str | list[str] | None) -> str | None:
+def _export_value(value: str | bool | list[str] | None) -> str | None:
+    if isinstance(value, bool):
+        return str(value).lower()
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")) if isinstance(value, list) else value

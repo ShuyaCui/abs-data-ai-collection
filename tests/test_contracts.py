@@ -119,6 +119,37 @@ def test_preserves_a_contractual_string_array_value() -> None:
     assert fact.value == ["中债资信:AAAsf", "中诚信国际:AAAsf"]
 
 
+def test_preserves_a_contractual_boolean_value_without_coercing_it_to_text() -> None:
+    fact = ExtractionFact(
+        fact_id="static-pool",
+        field_id="has_revolving_purchase",
+        entity_key="product:test",
+        status=FactStatus.DISCLOSED,
+        value=False,
+        evidence=[evidence()],
+    )
+
+    assert fact.value is False
+    with pytest.raises(ValidationError, match="boolean facts require a boolean"):
+        ExtractionFact(
+            fact_id="wrong-static-pool",
+            field_id="has_revolving_purchase",
+            entity_key="product:test",
+            status=FactStatus.DISCLOSED,
+            value="false",
+            evidence=[evidence()],
+        )
+    with pytest.raises(ValidationError):
+        ExtractionFact(
+            fact_id="numeric-static-pool",
+            field_id="has_revolving_purchase",
+            entity_key="product:test",
+            status=FactStatus.DISCLOSED,
+            value=0,
+            evidence=[evidence()],
+        )
+
+
 @pytest.mark.parametrize(
     ("field_id", "entity_key", "message"),
     [

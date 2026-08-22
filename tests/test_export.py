@@ -152,3 +152,34 @@ def test_exports_a_string_array_as_canonical_json_text(tmp_path) -> None:
     workbook = load_workbook(output, data_only=False)
     assert workbook["security_2689075"]["B1"].value == '["中债资信:AAAsf","中诚信国际:AAAsf"]'
     assert list(workbook["证据"].values)[1][3] == '["中债资信:AAAsf","中诚信国际:AAAsf"]'
+
+
+def test_exports_a_boolean_as_canonical_lowercase_text(tmp_path) -> None:
+    template = tmp_path / "template.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"] = "是否含循环购买"
+    workbook.save(template)
+    fact = ExtractionFact(
+        fact_id="static-pool",
+        field_id="has_revolving_purchase",
+        entity_key="product:test",
+        status=FactStatus.DISCLOSED,
+        value=False,
+        evidence=[
+            EvidenceRef(
+                evidence_id="p090:b005",
+                artifact_scope="pypdf-pages-90-90",
+                document_name="发行说明书.pdf",
+                physical_page=90,
+                locator="静态池",
+                exact_text="不会购买或替换资产",
+            )
+        ],
+    )
+    output = tmp_path / "export.xlsx"
+
+    export_facts(template, [fact], output)
+
+    workbook = load_workbook(output, data_only=False)
+    assert workbook["product_test"]["B1"].value == "false"
+    assert list(workbook["证据"].values)[1][3] == "false"
