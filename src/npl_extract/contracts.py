@@ -66,7 +66,7 @@ class ExtractionFact(BaseModel):
 
     @model_validator(mode="after")
     def enforce_fact_contract(self) -> ExtractionFact:
-        contract = load_field_contracts().get(self.field_id)
+        contract = _load_all_field_contracts().get(self.field_id)
         if contract is None:
             raise ValueError("unknown field")
         if self.status not in contract.allowed_statuses:
@@ -100,10 +100,22 @@ _STATUSES_BY_POLICY = {
 
 @lru_cache(maxsize=1)
 def load_field_contracts() -> dict[str, FieldContract]:
+    return _load_contracts(include_supporting=False)
+
+
+@lru_cache(maxsize=1)
+def _load_all_field_contracts() -> dict[str, FieldContract]:
+    return _load_contracts(include_supporting=True)
+
+
+def _load_contracts(*, include_supporting: bool) -> dict[str, FieldContract]:
     path = Path(__file__).parents[2] / "config" / "fields.v1.json"
     document = json.loads(path.read_text())
     fields = []
-    for item in document["fields"]:
+    items = document["fields"]
+    if include_supporting:
+        items += document.get("supporting_fields", [])
+    for item in items:
         field = {**document["defaults"], **item, "contract_version": document["version"]}
         policy = ValuePolicy(field["value_policy"])
         field["allowed_statuses"] = _STATUSES_BY_POLICY[policy] | (

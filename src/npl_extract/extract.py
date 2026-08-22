@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 import re
 
@@ -45,13 +46,19 @@ def extract_trustee_report_facts(
     pages: list[PageContent], document_name: str, entity_key: str
 ) -> list[ExtractionFact]:
     """Extract deterministic trustee-report facts from parser-owned text blocks."""
+    document_text = "\n".join(block.exact_text for page in pages for block in page.blocks)
+    if "受托机构报告" not in document_name and "受托机构报告" not in document_text:
+        return []
     report_date: ExtractionFact | None = None
     in_progress: RecoveryComponent | None = None
     completed: RecoveryComponent | None = None
     for page in pages:
         for block in page.blocks:
             if report_date is None and (match := _REPORT_DATE.search(block.exact_text)):
-                value = f"{match.group(1)}-{int(match.group(2)):02d}-{int(match.group(3)):02d}"
+                try:
+                    value = date(int(match.group(1)), int(match.group(2)), int(match.group(3))).isoformat()
+                except ValueError:
+                    continue
                 report_date = ExtractionFact(
                     fact_id=f"disclosed:latest-report-date:{block.evidence_id}",
                     field_id="latest_report_date",
@@ -60,7 +67,7 @@ def extract_trustee_report_facts(
                     value=value,
                     evidence=[_evidence(block.evidence_id, document_name, page.physical_page, "封面/报告日期", block.exact_text)],
                 )
-            if in_progress is None and (match := _IN_PROGRESS_RECOVERY.search(block.exact_text)):
+            if "资金池现金流流入" in document_text and in_progress is None and (match := _IN_PROGRESS_RECOVERY.search(block.exact_text)):
                 in_progress = RecoveryComponent(
                     fact_id=f"disclosed:recovery-in-progress:{block.evidence_id}",
                     amount_cny=match.group(1).replace(",", ""),
@@ -72,7 +79,7 @@ def extract_trustee_report_facts(
                         block.exact_text,
                     ),
                 )
-            if completed is None and (match := _COMPLETED_RECOVERY.search(block.exact_text)):
+            if "资金池现金流流入" in document_text and completed is None and (match := _COMPLETED_RECOVERY.search(block.exact_text)):
                 completed = RecoveryComponent(
                     fact_id=f"disclosed:recovery-completed:{block.evidence_id}",
                     amount_cny=match.group(1).replace(",", ""),
@@ -86,6 +93,26 @@ def extract_trustee_report_facts(
                 )
     facts = [fact for fact in [report_date] if fact is not None]
     if in_progress and completed:
+        facts.extend(
+            [
+                ExtractionFact(
+                    fact_id=in_progress.fact_id,
+                    field_id="npl_recovery_in_progress_cumulative",
+                    entity_key=entity_key,
+                    status=FactStatus.DISCLOSED,
+                    value=in_progress.amount_cny,
+                    evidence=[in_progress.evidence],
+                ),
+                ExtractionFact(
+                    fact_id=completed.fact_id,
+                    field_id="npl_recovery_completed_cumulative",
+                    entity_key=entity_key,
+                    status=FactStatus.DISCLOSED,
+                    value=completed.amount_cny,
+                    evidence=[completed.evidence],
+                ),
+            ]
+        )
         facts.append(derive_npl_recovery_cash(entity_key=entity_key, in_progress=in_progress, completed=completed))
     return facts
 

@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 
 from pypdf import PdfReader
 
@@ -57,3 +61,26 @@ class PypdfNativeParser:
             ]
             pages.append(PageContent(page_number, text, blocks))
         return pages
+
+
+def parse_native_pdf_isolated(path: Path, *, timeout_seconds: int = 120) -> list[PageContent]:
+    """Run the fallback parser with bounded output and a hard wall-clock limit."""
+    with tempfile.NamedTemporaryFile(mode="w+b") as output:
+        subprocess.run(
+            [sys.executable, "-m", "npl_extract.parser_worker", str(path)],
+            check=True,
+            stdout=output,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout_seconds,
+        )
+        output.seek(0)
+        payload = output.read().decode()
+    return [
+        PageContent(
+            physical_page=item["physical_page"],
+            native_text=item["native_text"],
+            blocks=[Block(**block) for block in item["blocks"]],
+            has_complex_table=item["has_complex_table"],
+        )
+        for item in json.loads(payload)
+    ]

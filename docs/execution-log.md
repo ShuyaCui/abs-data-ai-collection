@@ -20,3 +20,7 @@
 - Added a test rejecting annotation `/Launch` actions.
 - Evaluated routing on 751 real sample pages; see `docs/evaluations/2026-08-22-page-routing-sample.md`.
 - Extracted and value-checked the first deterministic trustee-report slice: `最新报告日期` and `NPL-受托已回收（亿）`. Both remain provisional until geometry-capable parser evidence is available.
+- Made artifact writes safe for concurrent attempts by using a unique temporary file for each atomic replace; added a two-writer regression test.
+- Persisted the two disclosed inputs behind field 35 (`处置中累计回收金额` and `处置完毕累计回收金额`) as supporting facts before deriving the exported amount. Candidate fact sets are immutable, content-addressed JSONL artifacts. The extractor now refuses non-trustee documents and invalid dates.
+- Moved the native fallback parse out of the CLI process and added CPU/output-size limits plus a wall-clock timeout. Container-level network isolation and memory limits remain production deployment requirements.
+- Added the optional `parser` dependency set with Docling 2.121.0. RapidOCR local weights downloaded successfully; Docling's table-model download is incomplete in the current network environment, so geometry/table validation remains pending.

@@ -48,5 +48,9 @@
   {"id":"unit_remaining_face_value","export_name":"单张剩余面额","entity_grain":"tranche","value_type":"decimal","unit":"UNSPECIFIED","critical":false},
   {"id":"actual_financing_entity","export_name":"实际融资主体","entity_grain":"product","value_type":"string[]","unit":null,"critical":false},
   {"id":"large_non_diversified","export_name":"是否大额非分散","entity_grain":"product","value_type":"boolean","unit":null,"critical":false,"pending_definition":true}
+  ],
+  "supporting_fields": [
+  {"id":"npl_recovery_in_progress_cumulative","export_name":"处置中累计回收金额（支撑事实）","entity_grain":"report","value_type":"decimal","unit":"CNY","critical":true,"source_families":["trustee_reports"],"source_precedence":["trustee_reports"]},
+  {"id":"npl_recovery_completed_cumulative","export_name":"处置完毕累计回收金额（支撑事实）","entity_grain":"report","value_type":"decimal","unit":"CNY","critical":true,"source_families":["trustee_reports"],"source_precedence":["trustee_reports"]}
   ]
 }
