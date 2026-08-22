@@ -223,6 +223,7 @@ def extract_issuance_result_ocr_facts(
         if not page.ocr_requested:
             continue
         values = {"security_code": [], "maturity_date": [], "tranche_issue_amount": []}
+        level_candidates = []
         labels_seen = set()
         for index, block in enumerate(page.blocks):
             label = re.sub(r"\s+", "", block.exact_text)
@@ -243,14 +244,24 @@ def extract_issuance_result_ocr_facts(
             elif label == "实际发行总额" and (match := _AMOUNT_IN_TEN_THOUSANDS.fullmatch(value)):
                 amount = format((Decimal(match.group(1).replace(",", "")) / Decimal("10000")).normalize(), "f")
                 values["tranche_issue_amount"].append((amount, block, value_block))
+            elif label == "证券名称":
+                levels = [level for level in ("优先档", "次级档") if level in value]
+                if len(levels) == 1:
+                    level_candidates.append((levels[0], block, value_block, index))
         if labels_seen and not all(len(candidates) == 1 for candidates in values.values()):
             return []
         if labels_seen:
-            records.append((page, {field_id: candidates[0] for field_id, candidates in values.items()}))
-    if len({values["security_code"][0] for _, values in records}) != len(records):
+            code_label = values["security_code"][0][1]
+            code_index = next(index for index, block in enumerate(page.blocks) if block is code_label)
+            # ponytail: this OCR layout is one record/page; use table-cell geometry after the PP-Structure preflight is cleared.
+            attached_levels = [candidate for candidate in level_candidates if 0 < code_index - candidate[3] <= 6]
+            records.append(
+                (page, {field_id: candidates[0] for field_id, candidates in values.items()}, attached_levels[0] if len(attached_levels) == 1 else None)
+            )
+    if len({values["security_code"][0] for _, values, _ in records}) != len(records):
         return []
     facts = []
-    for page, values in records:
+    for page, values, level in records:
         code = values["security_code"][0]
         entity_key = f"security:{code}"
         for field_id, (value, label_block, value_block) in values.items():
@@ -265,6 +276,22 @@ def extract_issuance_result_ocr_facts(
                         _evidence(title.evidence_id, artifact_scope, document_name, 1, "公告标题", title.exact_text),
                         _evidence(label_block.evidence_id, artifact_scope, document_name, page.physical_page, "簿记建档结果公告/证券信息表", label_block.exact_text),
                         _evidence(value_block.evidence_id, artifact_scope, document_name, page.physical_page, "簿记建档结果公告/证券信息表", value_block.exact_text),
+                    ],
+                )
+            )
+        if level:
+            value, label_block, value_block, _ = level
+            facts.append(
+                ExtractionFact(
+                    fact_id=f"disclosed:tranche-level:{value_block.evidence_id}",
+                    field_id="tranche_level",
+                    entity_key=entity_key,
+                    status=FactStatus.DISCLOSED,
+                    value=value,
+                    evidence=[
+                        _evidence(title.evidence_id, artifact_scope, document_name, 1, "公告标题", title.exact_text),
+                        _evidence(label_block.evidence_id, artifact_scope, document_name, page.physical_page, "簿记建档结果公告/证券信息表/证券名称", label_block.exact_text),
+                        _evidence(value_block.evidence_id, artifact_scope, document_name, page.physical_page, "簿记建档结果公告/证券信息表/证券名称", value_block.exact_text),
                     ],
                 )
             )
