@@ -1,0 +1,11 @@
+.git
+.venv
+.uv-cache
+.uv-python
+.pytest_cache
+node_modules
+data
+runs
+*.xlsx
+*.pdf
+*.png

@@ -1,0 +1,28 @@
+FROM python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a
+
+WORKDIR /app
+COPY --from=ghcr.io/astral-sh/uv@sha256:7a88d4c4e6f44200575000638453a5a381db0ae31ad5c3a51b14f8687c9d93a3 /uv /uvx /usr/local/bin/
+COPY pyproject.toml uv.lock ./
+COPY src ./src
+COPY docker/ppstructure_smoke.py ./docker/ppstructure_smoke.py
+
+RUN apt-get update \
+ && apt-get install --no-install-recommends --yes libgl1 libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV PADDLE_PDX_CACHE_HOME=/opt/paddlex \
+    PADDLE_PDX_MODEL_SOURCE=bos \
+    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
+    HOME=/tmp \
+    XDG_CACHE_HOME=/tmp
+
+RUN uv sync --extra ocr --frozen \
+ && .venv/bin/python -c "from paddleocr import PPStructureV3; PPStructureV3(device='cpu', use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, use_formula_recognition=False, use_chart_recognition=False, use_region_detection=False)" \
+ && cd /opt/paddlex/official_models \
+ && find . -type f -print0 | sort -z | xargs -0 sha256sum > ../MODELS.sha256 \
+ && useradd --system --uid 10001 --create-home app \
+ && chown -R app:app /app /opt/paddlex
+
+USER app
+
+ENTRYPOINT [".venv/bin/python", "docker/ppstructure_smoke.py"]
