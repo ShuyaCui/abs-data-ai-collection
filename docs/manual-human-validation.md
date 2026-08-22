@@ -96,6 +96,25 @@ flowchart LR
 
 Excel 导出只写入 `disclosed` 或 `derived` 的非空、无歧义值；其他状态仍保留证据审计信息，但不应成为主单元格值。详见 [excel-export-slice](evaluations/2026-08-22-excel-export-slice.md)。
 
+### 文件夹批处理入口
+
+已支持的文件夹可使用下列命令生成三个同名输出：Excel、候选 JSONL 和批次清单。
+
+```bash
+npl-extract extract-folder <PDF文件夹> \
+  --product-key product:<产品标识> \
+  --product-name <经业务确认的产品展示名> \
+  --template <42字段模板.xlsx> \
+  --output <候选结果.xlsx> \
+  --runs-dir <运行证据目录>
+```
+
+输出必须是输入目录外的 `.xlsx`，避免覆盖源 PDF。批次清单会逐份报告 `processed`、`unsupported`、`rejected`、`superseded`、`ambiguous`、`failed` 或 `no_facts`，并记录源文件 SHA-256、页数、解析工件和候选工件路径。
+
+`--product-key` 是下游系统标识，`--product-name` 是业务负责人确认的规范产品展示名；两者不可互相推断。安全准入后的待处理文件必须从文件名规范化到同一个 `--product-name`，否则全部标为 `ambiguous`。同角色的发行公告、发行结果公告或发行说明书出现多份时，系统也标为 `ambiguous`，不任选一份。受托报告只会从安全准入后的候选中选择唯一且可解析的最高“总第”期次；最高期次并列、期次无法识别时全部标为 `ambiguous`，较早的有效期次才标为 `superseded`。单份解析失败不会中止其余文档，状态为 `failed` 并附错误码。
+
+跨文档派生字段会另存为以批次 SHA-256 命名的不可变候选工件；清单中的 `derived_facts_artifact` 是人工复核此类字段的唯一输入。
+
 ## 6. 如何作出人工决定
 
 人工决定是追加的不可变事件，而不是修改原始候选：

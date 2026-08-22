@@ -56,6 +56,267 @@ def test_extract_command_routes_an_issuance_result_document(tmp_path: Path, caps
     assert json.loads(capsys.readouterr().out) == []
 
 
+def test_extract_folder_writes_candidates_and_records_unhandled_documents(tmp_path: Path, capsys, monkeypatch) -> None:
+    source = tmp_path / "臻粹不良资产支持证券发行公告.pdf"
+    unhandled = tmp_path / "尚未支持的附件.pdf"
+    for path in (source, unhandled):
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        content = BytesIO()
+        writer.write(content)
+        path.write_bytes(content.getvalue())
+    template = tmp_path / "template.xlsx"
+    workbook = Workbook()
+    workbook.active.append(["资产全称", None])
+    workbook.save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+    monkeypatch.setattr(
+        "npl_extract.cli.parse_native_pdf_isolated",
+        lambda *args, **kwargs: [PageContent(1, "", [Block("p001:b001", 1, "臻粹不良资产支持证券发行公告", None)])],
+    )
+
+    exit_code = main(
+        [
+            "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "臻粹不良资产", "--template", str(template),
+            "--output", str(output), "--runs-dir", str(tmp_path / "runs"),
+        ]
+    )
+
+    summary = json.loads(capsys.readouterr().out)
+    manifest = json.loads(output.with_suffix(".manifest.json").read_text())
+    assert exit_code == 0
+    assert summary["fact_count"] == 1
+    assert output.is_file() and output.with_suffix(".jsonl").is_file()
+    assert {item["document_name"]: item["status"] for item in manifest["documents"]} == {
+        source.name: "processed", unhandled.name: "unsupported"
+    }
+
+
+def test_extract_folder_refuses_ambiguous_duplicate_document_roles(tmp_path: Path, capsys) -> None:
+    for name in ("甲产品发行公告.pdf", "乙产品发行公告.pdf"):
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        content = BytesIO()
+        writer.write(content)
+        (tmp_path / name).write_bytes(content.getvalue())
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+
+    exit_code = main(
+        [
+            "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "甲产品", "--template", str(template),
+            "--output", str(output), "--runs-dir", str(tmp_path / "runs"),
+        ]
+    )
+
+    manifest = json.loads(output.with_suffix(".manifest.json").read_text())
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["fact_count"] == 0
+    assert {item["status"] for item in manifest["documents"]} == {"ambiguous"}
+
+
+def test_extract_folder_continues_after_one_document_parser_failure(tmp_path: Path, capsys, monkeypatch) -> None:
+    source = tmp_path / "臻粹不良资产支持证券发行公告.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    content = BytesIO()
+    writer.write(content)
+    source.write_bytes(content.getvalue())
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+    monkeypatch.setattr(
+        "npl_extract.cli.parse_native_pdf_isolated",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("PARSER_TIMEOUT: test")),
+    )
+
+    exit_code = main(
+        [
+            "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "臻粹不良资产", "--template", str(template),
+            "--output", str(output), "--runs-dir", str(tmp_path / "runs"),
+        ]
+    )
+
+    manifest = json.loads(output.with_suffix(".manifest.json").read_text())
+    assert exit_code == 0
+    assert output.is_file()
+    document = manifest["documents"][0]
+    assert {key: document[key] for key in ("document_name", "status", "role", "error_code")} == {
+        "document_name": source.name, "status": "failed", "role": "issuance_announcement", "error_code": "PARSER_TIMEOUT"
+    }
+    assert document["source_sha256"] == sha256(source.read_bytes()).hexdigest()
+
+
+def test_extract_folder_refuses_tied_or_unparseable_trustee_periods(tmp_path: Path, capsys) -> None:
+    for name in (
+        "臻粹不良资产证券化信托受托机构报告总第4期甲.pdf",
+        "臻粹不良资产证券化信托受托机构报告总第4期乙.pdf",
+    ):
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        content = BytesIO()
+        writer.write(content)
+        (tmp_path / name).write_bytes(content.getvalue())
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+
+    exit_code = main(
+        [
+            "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "臻粹不良资产", "--template", str(template),
+            "--output", str(output), "--runs-dir", str(tmp_path / "runs"),
+        ]
+    )
+
+    manifest = json.loads(output.with_suffix(".manifest.json").read_text())
+    assert exit_code == 0
+    assert {item["status"] for item in manifest["documents"]} == {"ambiguous"}
+
+
+def test_extract_folder_uses_latest_safe_trustee_when_newer_file_is_rejected(tmp_path: Path, capsys) -> None:
+    safe = tmp_path / "臻粹不良资产证券化信托受托机构报告总第3期.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    content = BytesIO()
+    writer.write(content)
+    safe.write_bytes(content.getvalue())
+    rejected = tmp_path / "臻粹不良资产证券化信托受托机构报告总第4期.pdf"
+    rejected.write_bytes(b"%PDF-not-a-valid-pdf")
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+
+    exit_code = main(
+        [
+            "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "臻粹不良资产", "--template", str(template),
+            "--output", str(output), "--runs-dir", str(tmp_path / "runs"),
+        ]
+    )
+
+    manifest = json.loads(output.with_suffix(".manifest.json").read_text())
+    assert exit_code == 0
+    assert {item["document_name"]: item["status"] for item in manifest["documents"]} == {
+        safe.name: "no_facts", rejected.name: "rejected"
+    }
+
+
+def test_extract_folder_refuses_mixed_product_document_names(tmp_path: Path, capsys) -> None:
+    for name in ("甲产品不良资产发行公告.pdf", "乙产品不良资产发行说明书.pdf"):
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        content = BytesIO()
+        writer.write(content)
+        (tmp_path / name).write_bytes(content.getvalue())
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+
+    exit_code = main(
+        [
+            "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "甲产品不良资产", "--template", str(template),
+            "--output", str(output), "--runs-dir", str(tmp_path / "runs"),
+        ]
+    )
+
+    manifest = json.loads(output.with_suffix(".manifest.json").read_text())
+    assert exit_code == 0
+    assert {item["status"] for item in manifest["documents"]} == {"ambiguous"}
+
+
+def test_extract_folder_refuses_mixed_products_hidden_by_duplicate_roles(tmp_path: Path, capsys) -> None:
+    for name in ("甲产品不良资产发行公告.pdf", "乙产品不良资产发行公告.pdf", "乙产品不良资产发行说明书.pdf"):
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        content = BytesIO()
+        writer.write(content)
+        (tmp_path / name).write_bytes(content.getvalue())
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+
+    exit_code = main(
+        [
+            "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "甲产品不良资产", "--template", str(template),
+            "--output", str(output), "--runs-dir", str(tmp_path / "runs"),
+        ]
+    )
+
+    manifest = json.loads(output.with_suffix(".manifest.json").read_text())
+    assert exit_code == 0
+    assert {item["status"] for item in manifest["documents"]} == {"ambiguous"}
+
+
+def test_extract_folder_distinguishes_product_terms_after_npl_label(tmp_path: Path, capsys) -> None:
+    for name in ("甲不良资产支持证券第一期发行公告.pdf", "甲不良资产支持证券第二期发行说明书.pdf"):
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        content = BytesIO()
+        writer.write(content)
+        (tmp_path / name).write_bytes(content.getvalue())
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+
+    exit_code = main(
+        [
+            "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "甲不良资产第一期", "--template", str(template),
+            "--output", str(output), "--runs-dir", str(tmp_path / "runs"),
+        ]
+    )
+
+    manifest = json.loads(output.with_suffix(".manifest.json").read_text())
+    assert exit_code == 0
+    assert {item["status"] for item in manifest["documents"]} == {"ambiguous"}
+
+
+def test_extract_folder_rejects_template_as_output(tmp_path: Path, capsys) -> None:
+    template = tmp_path.parent / "template.xlsx"
+    Workbook().save(template)
+
+    exit_code = main(
+        [
+            "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "test", "--template", str(template),
+            "--output", str(template),
+        ]
+    )
+
+    assert exit_code == 2
+    assert "outside the input directory" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_extract_folder_rejects_an_output_held_by_another_job(tmp_path: Path, capsys, monkeypatch) -> None:
+    template = tmp_path.parent / "template.xlsx"
+    Workbook().save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+    monkeypatch.setattr("npl_extract.cli._exclusive_output_lock", lambda path: (_ for _ in ()).throw(BlockingIOError()))
+
+    exit_code = main(
+        [
+            "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "test", "--template", str(template),
+            "--output", str(output),
+        ]
+    )
+
+    assert exit_code == 2
+    assert "already in use" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_extract_folder_rejects_output_inside_the_input_folder(tmp_path: Path, capsys) -> None:
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+
+    exit_code = main(
+        [
+            "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "test", "--template", str(template),
+            "--output", str(tmp_path / "candidate.xlsx"),
+        ]
+    )
+
+    assert exit_code == 2
+    assert "outside the input directory" in json.loads(capsys.readouterr().out)["error"]
+
+
 def test_extract_command_persists_an_issuance_announcement_fact_set(tmp_path: Path, capsys, monkeypatch) -> None:
     source = tmp_path / "臻粹不良资产支持证券发行公告.pdf"
     writer = PdfWriter()

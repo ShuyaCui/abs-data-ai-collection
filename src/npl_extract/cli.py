@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import tempfile
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -53,6 +56,13 @@ def main(argv: list[str] | None = None) -> int:
     extract_command.add_argument("--pages", type=_page_range)
     extract_command.add_argument("--document-name")
     extract_command.add_argument("--association-facts", type=Path, nargs="+")
+    folder_command = commands.add_parser("extract-folder", help="extract supported PDFs in one local folder")
+    folder_command.add_argument("input_dir", type=Path)
+    folder_command.add_argument("--product-key", required=True)
+    folder_command.add_argument("--product-name", required=True, help="canonical product display name used to bind source documents")
+    folder_command.add_argument("--template", type=Path, required=True)
+    folder_command.add_argument("--output", type=Path, required=True)
+    folder_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
     export_command = commands.add_parser("export", help="project persisted facts to a 42-field workbook")
     export_command.add_argument("--template", type=Path, required=True)
     export_command.add_argument("--facts", type=Path, nargs="+", required=True)
@@ -68,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
     review_command.add_argument("--corrected-fact", type=Path)
     review_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
     args = parser.parse_args(argv)
+    if args.command == "extract-folder":
+        return _extract_folder(args)
     if args.command == "export":
         from npl_extract.export import export_facts
 
@@ -153,6 +165,231 @@ def main(argv: list[str] | None = None) -> int:
 
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _extract_folder(args: argparse.Namespace) -> int:
+    """Run the supported deterministic routes in one folder and write an auditable batch manifest."""
+    from npl_extract.export import export_facts
+
+    input_dir = args.input_dir.resolve()
+    output_path = args.output.resolve()
+    if not input_dir.is_dir() or not args.product_key.startswith("product:") or not args.product_name.strip():
+        print(_json({"error": "extract-folder requires an existing directory, product: key, and product name"}))
+        return 2
+    if output_path.suffix.lower() != ".xlsx" or _is_within(output_path, input_dir) or args.template.resolve() == output_path:
+        print(_json({"error": "extract-folder output must be an .xlsx outside the input directory"}))
+        return 2
+    try:
+        with _exclusive_output_lock(output_path):
+            return _extract_folder_locked(args, input_dir, output_path)
+    except BlockingIOError:
+        print(_json({"error": "extract-folder output is already in use"}))
+        return 2
+
+
+def _extract_folder_locked(args: argparse.Namespace, input_dir: Path, output_path: Path) -> int:
+    documents = []
+    for path in sorted(input_dir.glob("*.pdf")):
+        role = _folder_role(path.name)
+        document = {"document_name": path.name, "source_sha256": sha256(path.read_bytes()).hexdigest()}
+        if role is None:
+            documents.append({**document, "status": "unsupported"})
+            continue
+        result = inspect_pdf(path, input_root=input_dir)
+        if not result.accepted:
+            documents.append({**document, "role": role, "status": "rejected", "failure_code": result.failure_code.value})
+            continue
+        documents.append(
+            {
+                **document,
+                "role": role,
+                "status": "queued",
+                "page_count": result.page_count,
+                "product_identity": _document_product_identity(path.name, role),
+            }
+        )
+    identities = {
+        document["product_identity"]
+        for document in documents
+        if document["status"] == "queued" and document.get("product_identity")
+    }
+    if identities != {_canonical_product_identity(args.product_name)}:
+        for document in documents:
+            if document["status"] == "queued":
+                document["status"] = "ambiguous"
+                document["error_code"] = "PRODUCT_IDENTITY_MISMATCH"
+    for role in ("issuance_announcement", "issuance_result", "prospectus"):
+        duplicates = [document for document in documents if document.get("role") == role and document["status"] == "queued"]
+        if len(duplicates) > 1:
+            for document in duplicates:
+                document["status"] = "ambiguous"
+                document["error_code"] = "DUPLICATE_DOCUMENT_ROLE"
+    trustees = [document for document in documents if document.get("role") == "trustee" and document["status"] == "queued"]
+    if trustees:
+        periods = {document["document_name"]: _trustee_period(Path(document["document_name"])) for document in trustees}
+        latest_period = max(periods.values())
+        latest = [name for name, period in periods.items() if period == latest_period]
+        if latest_period < 1 or len(latest) != 1:
+            for document in trustees:
+                document["status"] = "ambiguous"
+                document["error_code"] = "TRUSTEE_PERIOD_AMBIGUOUS"
+        else:
+            for document in trustees:
+                if document["document_name"] != latest[0]:
+                    document["status"] = "superseded"
+    facts: list[ExtractionFact] = []
+    associations: list[ExtractionFact] = []
+    for role in ("issuance_announcement", "issuance_result", "prospectus", "trustee"):
+        queued = [document for document in documents if document.get("role") == role and document["status"] == "queued"]
+        if len(queued) != 1:
+            continue
+        document = queued[0]
+        path = input_dir / document["document_name"]
+        parser = "docling-ocr" if role == "issuance_result" else "pypdf"
+        try:
+            staged = stage_verified_pdf(path, document["source_sha256"], args.runs_dir)
+            parser_id = parser_identity(parser)
+            entity_key = f"report:{args.product_key.removeprefix('product:')}" if role == "trustee" else args.product_key
+            extracted: list[ExtractionFact] = []
+            ranges = {
+                "issuance_announcement": [((1, 2), extract_issuance_announcement_facts)],
+                "issuance_result": [((1, 2), extract_issuance_result_ocr_facts)],
+                "trustee": [((1, 7), extract_trustee_report_facts)],
+                "prospectus": [
+                    ((2, 3), None), ((16, 16), extract_prospectus_actual_financing_entity_facts),
+                    ((90, 90), extract_prospectus_revolving_purchase_fact), ((120, 121), extract_prospectus_initial_face_value_facts),
+                ],
+            }[role]
+            document["parser"] = parser_id
+            document["artifact_scopes"] = []
+            for page_range, extractor in ranges:
+                scope = _scope(parser_id, page_range)
+                pages = parse_native_pdf_isolated(staged, parser=parser, expected_sha256=document["source_sha256"], page_range=page_range)
+                if role == "prospectus" and page_range == (2, 3):
+                    slice_facts = extract_prospectus_issue_amount_facts(pages, path.name, entity_key, scope)
+                    slice_facts.extend(extract_prospectus_market_facts(pages, path.name, entity_key, scope))
+                    slice_facts.extend(extract_prospectus_first_interest_payment_facts(pages, path.name, associations, scope))
+                    slice_facts.extend(extract_prospectus_issue_rating_facts(pages, path.name, associations, scope))
+                elif role == "issuance_result":
+                    slice_facts = extractor(pages, path.name, scope)
+                    associations = slice_facts
+                elif role == "trustee":
+                    slice_facts = extractor(pages, path.name, entity_key, scope)
+                elif role == "prospectus" and extractor is extract_prospectus_initial_face_value_facts:
+                    slice_facts = extractor(pages, path.name, associations, scope)
+                else:
+                    slice_facts = extractor(pages, path.name, entity_key, scope)
+                artifacts = persist_page_artifacts(document["source_sha256"], pages, args.runs_dir, scope=scope, parser_identity=parser_id)
+                document["artifact_scopes"].append(str(artifacts.run_dir))
+                extracted.extend(slice_facts)
+            if extracted:
+                persisted = persist_facts(document["source_sha256"], extracted, args.runs_dir)
+                document["facts_artifact"] = str(persisted.path)
+                facts.extend(extracted)
+                document["status"] = "processed"
+            else:
+                document["status"] = "no_facts"
+        except (OSError, RuntimeError, ValueError) as error:
+            document["status"] = "failed"
+            document["error_code"] = _error_code(error)
+    issue_amounts = [fact for fact in facts if fact.field_id == "tranche_issue_amount"]
+    balances = [fact for fact in facts if fact.field_id == "tranche_current_balance"]
+    initial_faces = [fact for fact in facts if fact.field_id == "tranche_initial_face_value"]
+    from npl_extract.extract import derive_unit_remaining_face_values
+
+    derived = derive_unit_remaining_face_values(issue_amounts, balances, initial_faces)
+    batch_sha256 = sha256(_json({"product_key": args.product_key, "source_sha256": sorted(document["source_sha256"] for document in documents)}).encode()).hexdigest()
+    derived_artifact = persist_facts(batch_sha256, derived, args.runs_dir) if derived else None
+    facts.extend(derived)
+    facts_path = output_path.with_suffix(".jsonl")
+    manifest_path = output_path.with_suffix(".manifest.json")
+    manifest = {
+        "input_dir": str(input_dir), "product_key": args.product_key, "product_name": args.product_name,
+        "batch_sha256": batch_sha256, "generated_at": datetime.now(UTC).isoformat(), "documents": documents,
+        "derived_facts_artifact": str(derived_artifact.path) if derived_artifact else None, "fact_count": len(facts),
+    }
+    _publish_batch_outputs(args.template, facts, output_path, facts_path, manifest_path, manifest)
+    print(_json({"output": str(output_path), "facts": str(facts_path), "manifest": str(manifest_path), "fact_count": len(facts)}))
+    return 0
+
+
+def _folder_role(document_name: str) -> str | None:
+    if "簿记建档发行结果公告" in document_name:
+        return "issuance_result"
+    if "发行公告" in document_name:
+        return "issuance_announcement"
+    if "发行说明书" in document_name:
+        return "prospectus"
+    if "受托机构报告" in document_name:
+        return "trustee"
+    return None
+
+
+def _trustee_period(path: Path) -> int:
+    match = re.search(r"总第(\d+)期", path.name)
+    return int(match.group(1)) if match else -1
+
+
+def _document_product_identity(document_name: str, role: str) -> str:
+    stem = Path(document_name).stem
+    suffixes = {
+        "issuance_announcement": "发行公告",
+        "issuance_result": "簿记建档发行结果公告",
+        "prospectus": "发行说明书",
+    }
+    product = stem.removesuffix(suffixes[role]) if role in suffixes else stem.split("受托机构报告", 1)[0]
+    return _canonical_product_identity(product)
+
+
+def _canonical_product_identity(value: str) -> str:
+    value = re.sub(r"\s+", "", value)
+    return value.replace("不良资产支持证券", "不良资产").replace("不良资产证券化信托", "不良资产")
+
+
+def _is_within(path: Path, directory: Path) -> bool:
+    try:
+        path.relative_to(directory)
+    except ValueError:
+        return False
+    return True
+
+
+def _error_code(error: Exception) -> str:
+    match = re.match(r"([A-Z][A-Z0-9_]+):", str(error))
+    return match.group(1) if match else error.__class__.__name__.upper()
+
+
+@contextmanager
+def _exclusive_output_lock(output_path: Path):
+    try:
+        import fcntl
+    except ImportError as error:
+        raise RuntimeError("PARSER_PLATFORM_UNSUPPORTED: POSIX file locking is required") from error
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.with_suffix(f"{output_path.suffix}.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def _publish_batch_outputs(
+    template: Path, facts: list[ExtractionFact], output_path: Path, facts_path: Path, manifest_path: Path, manifest: dict[str, object]
+) -> None:
+    from npl_extract.export import export_facts
+
+    with tempfile.TemporaryDirectory(dir=output_path.parent, prefix=f".{output_path.stem}.") as temporary:
+        root = Path(temporary)
+        workbook = root / output_path.name
+        output_facts = root / facts_path.name
+        output_manifest = root / manifest_path.name
+        export_facts(template, facts, workbook)
+        output_facts.write_text("".join(_json(fact.model_dump(mode="json")) + "\n" for fact in facts), encoding="utf-8")
+        output_manifest.write_text(_json(manifest), encoding="utf-8")
+        workbook.replace(output_path)
+        output_facts.replace(facts_path)
+        output_manifest.replace(manifest_path)
 
 
 def _load_facts(paths: list[Path]) -> list[ExtractionFact]:
