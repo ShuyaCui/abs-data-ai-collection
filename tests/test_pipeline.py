@@ -108,6 +108,27 @@ def test_isolated_native_parser_preserves_page_text(tmp_path: Path) -> None:
     assert "ABC123" in pages[0].native_text
 
 
+def test_docling_parser_keeps_bbox_for_a_native_page(tmp_path: Path) -> None:
+    pytest.importorskip("docling")
+    source = tmp_path / "native.pdf"
+    source.write_bytes(_text_pdf("Security ABC123"))
+
+    pages = parse_native_pdf_isolated(source, parser="docling", timeout_seconds=30)
+
+    assert "Security" in pages[0].native_text
+    assert pages[0].blocks[0].bbox is not None
+    assert pages[0].page_width == 72
+    assert pages[0].page_height == 72
+
+
+def test_parser_worker_error_is_clear(tmp_path: Path) -> None:
+    source = tmp_path / "native.pdf"
+    source.write_bytes(_text_pdf("Security ABC123"))
+
+    with pytest.raises(RuntimeError, match="PARSER_FAILED"):
+        parse_native_pdf_isolated(source, parser="unknown", timeout_seconds=5)
+
+
 def test_persisted_facts_refuse_a_conflicting_retry(tmp_path: Path) -> None:
     fact = ExtractionFact(
         fact_id="disclosed:date:p001:b001",

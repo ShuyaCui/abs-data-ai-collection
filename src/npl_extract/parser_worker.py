@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+import argparse
 from dataclasses import asdict
 import json
 from pathlib import Path
-import sys
 
-from npl_extract.parsers import PypdfNativeParser
+from npl_extract.parsers import DoclingNativeParser, PypdfNativeParser
 
 
 def main() -> int:
     _limit_resources()
-    pages = PypdfNativeParser().parse(Path(sys.argv[1]))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--parser", choices=["docling", "pypdf"], required=True)
+    parser.add_argument("path", type=Path)
+    args = parser.parse_args()
+    try:
+        pages = {"docling": DoclingNativeParser, "pypdf": PypdfNativeParser}[args.parser]().parse(args.path)
+    except RuntimeError as error:
+        code = "PARSER_EXTRA_MISSING" if "install npl-extract" in str(error) else "PARSER_FAILED"
+        print(json.dumps({"error": {"code": code, "message": str(error)}}))
+        return 2
     print(json.dumps([asdict(page) for page in pages], ensure_ascii=False))
     return 0
 

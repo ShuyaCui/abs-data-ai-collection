@@ -19,17 +19,19 @@ def main(argv: list[str] | None = None) -> int:
     parse_command = commands.add_parser("parse", help="write native-text evidence artifacts for one local PDF")
     parse_command.add_argument("pdf", type=Path)
     parse_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    parse_command.add_argument("--native-parser", choices=["pypdf", "docling"], default="pypdf")
     trustee_command = commands.add_parser("extract-trustee", help="extract deterministic trustee-report facts")
     trustee_command.add_argument("pdf", type=Path)
     trustee_command.add_argument("--entity-key", required=True)
     trustee_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    trustee_command.add_argument("--native-parser", choices=["pypdf", "docling"], default="pypdf")
     args = parser.parse_args(argv)
     result = inspect_pdf(args.pdf)
     if args.command == "inspect" or not result.accepted:
         print(_json(asdict(result)))
         return 0 if result.accepted else 2
     staged_pdf = stage_verified_pdf(args.pdf, result.document_sha256, args.runs_dir)
-    pages = parse_native_pdf_isolated(staged_pdf)
+    pages = parse_native_pdf_isolated(staged_pdf, parser=args.native_parser)
     if args.command == "extract-trustee":
         facts = extract_trustee_report_facts(pages, args.pdf.name, args.entity_key)
         if facts:

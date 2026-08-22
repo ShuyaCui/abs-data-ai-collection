@@ -53,6 +53,9 @@ def persist_page_artifacts(document_sha256: str, pages: list[PageContent], outpu
                         if page.blocks
                         else 0.0
                     ),
+                    "bbox_coordinate_system": "pdf_points_top_left" if page.page_width is not None else None,
+                    "page_width": page.page_width,
+                    "page_height": page.page_height,
                     "route": route.value,
                 }
             )
