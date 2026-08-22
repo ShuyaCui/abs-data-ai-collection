@@ -22,6 +22,8 @@ _IN_PROGRESS_RECOVERY = re.compile(r"^处置中\s+[\d,]+\.\d+\s+([\d,]+\.\d+)")
 _COMPLETED_RECOVERY = re.compile(r"^本期处置完毕\s+[\d,]+\.\d+\s+([\d,]+\.\d+)")
 _INITIAL_CUTOFF = re.compile(r"初始起算日\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
 _ISSUE_TOTAL = re.compile(r"发行规模为\s*([\d,]+(?:\.\d+)?)\s*元")
+_INITIAL_POOL_BALANCE = re.compile(r"资产池未偿本息\s*费余额\s*([\d,]+(?:\.\d+)?)\s*万元")
+_INITIAL_POOL_SECTION = re.compile(r"资产池特征\s*[（(]\s*于初始起算日\s*[）)]")
 
 
 def derive_npl_recovery_cash(
@@ -200,6 +202,41 @@ def extract_issuance_announcement_facts(
             )
         )
     return facts
+
+
+def extract_rating_report_facts(
+    pages: list[PageContent], document_name: str, entity_key: str, artifact_scope: str
+) -> list[ExtractionFact]:
+    """Extract product-level facts from a native-text rating report."""
+    if "信用评级报告" not in document_name:
+        return []
+    candidates = []
+    for page in pages:
+        if page.ocr_requested:
+            continue
+        for index, block in enumerate(page.blocks):
+            section_blocks = page.blocks[max(0, index - 3) : index + 1]
+            heading = next((item for item in reversed(section_blocks) if _INITIAL_POOL_SECTION.search(item.exact_text)), None)
+            if not heading:
+                continue
+            candidates.extend((page, heading, block, match) for match in _INITIAL_POOL_BALANCE.finditer(block.exact_text))
+    if len(candidates) != 1:
+        return []
+    page, heading, block, match = candidates[0]
+    value = format((Decimal(match.group(1).replace(",", "")) * Decimal("10000")).normalize(), "f")
+    evidence = [_evidence(heading.evidence_id, artifact_scope, document_name, page.physical_page, "资产池特征（于初始起算日）", heading.exact_text)]
+    if heading is not block:
+        evidence.append(_evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "资产池未偿本息费余额", block.exact_text))
+    return [
+        ExtractionFact(
+            fact_id=f"disclosed:initial-pool-balance:{block.evidence_id}",
+            field_id="initial_pool_outstanding_principal_interest_fees",
+            entity_key=entity_key,
+            status=FactStatus.DISCLOSED,
+            value=value,
+            evidence=evidence,
+        )
+    ]
 
 
 def _evidence(evidence_id: str, artifact_scope: str, document_name: str, physical_page: int, locator: str, exact_text: str) -> EvidenceRef:

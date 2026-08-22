@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from io import BytesIO
 from npl_extract.contracts import EvidenceRef, ExtractionFact, FactStatus
-from npl_extract.extract import extract_issuance_announcement_facts
+from npl_extract.extract import extract_issuance_announcement_facts, extract_rating_report_facts
 from pathlib import Path
 
 import pytest
@@ -58,6 +58,69 @@ def test_extracts_product_identity_cutoff_and_issue_total_from_issuance_announce
     }
     assert all(fact.status is FactStatus.DISCLOSED for fact in facts)
     assert {fact.evidence[0].physical_page for fact in facts} == {1, 2}
+
+
+def test_extracts_initial_pool_balance_from_rating_report() -> None:
+    pages = [
+        PageContent(
+            4,
+            "",
+            [
+                Block("p004:b017", 4, "资产池特征（于初始起算日）", [0, 0, 72, 72]),
+                Block("p004:b019", 4, "资产池未偿本息费余额 314,258.72 万元", [0, 0, 72, 72]),
+            ],
+        )
+    ]
+
+    facts = extract_rating_report_facts(
+        pages, "臻粹2026年第二期不良资产支持证券信用评级报告.pdf", "product:test", "pypdf-all"
+    )
+
+    assert [(fact.field_id, fact.value) for fact in facts] == [
+        ("initial_pool_outstanding_principal_interest_fees", "3142587200")
+    ]
+    assert [evidence.evidence_id for evidence in facts[0].evidence] == ["p004:b017", "p004:b019"]
+
+
+def test_rating_report_rejects_multiple_initial_pool_balances() -> None:
+    pages = [
+        PageContent(
+            4,
+            "",
+            [
+                Block("p004:b017", 4, "资产池特征（于初始起算日）", [0, 0, 72, 72]),
+                Block("p004:b019", 4, "资产池未偿本息费余额 314,258.72 万元", [0, 0, 72, 72]),
+                Block("p004:b020", 4, "资产池未偿本息费余额 1 万元", [0, 0, 72, 72]),
+            ],
+        )
+    ]
+
+    facts = extract_rating_report_facts(
+        pages, "臻粹2026年第二期不良资产支持证券信用评级报告.pdf", "product:test", "pypdf-all"
+    )
+
+    assert facts == []
+
+
+def test_rating_report_skips_a_pure_scan_page() -> None:
+    facts = extract_rating_report_facts(
+        [
+            PageContent(
+                4,
+                "OCR 后的文本",
+                [
+                    Block("p004:b017", 4, "资产池特征（于初始起算日）", [0, 0, 72, 72]),
+                    Block("p004:b019", 4, "资产池未偿本息费余额 314,258.72 万元", [0, 0, 72, 72]),
+                ],
+                ocr_requested=True,
+            )
+        ],
+        "臻粹2026年第二期不良资产支持证券信用评级报告.pdf",
+        "product:test",
+        "pypdf-all",
+    )
+
+    assert facts == []
 
 
 def test_issuance_full_name_comes_from_the_announcement_title_not_body_reference() -> None:
