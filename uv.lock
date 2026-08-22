@@ -1608,6 +1608,9 @@ dependencies = [
 dev = [
     { name = "pytest" },
 ]
+export = [
+    { name = "openpyxl" },
+]
 ocr = [
     { name = "paddleocr" },
     { name = "paddlepaddle" },
@@ -1620,6 +1623,7 @@ parser = [
 [package.metadata]
 requires-dist = [
     { name = "docling", marker = "extra == 'parser'", specifier = ">=2,<3" },
+    { name = "openpyxl", marker = "extra == 'export'", specifier = ">=3.1,<4" },
     { name = "paddleocr", marker = "extra == 'ocr'", specifier = ">=3,<4" },
     { name = "paddlepaddle", marker = "extra == 'ocr'", specifier = ">=3,<4" },
     { name = "paddlex", extras = ["ocr"], marker = "extra == 'ocr'", specifier = ">=3,<4" },
@@ -1627,7 +1631,7 @@ requires-dist = [
     { name = "pypdf", specifier = ">=6.0,<7" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<9" },
 ]
-provides-extras = ["dev", "parser", "ocr"]
+provides-extras = ["dev", "parser", "ocr", "export"]
 
 [[package]]
 name = "numpy"

@@ -22,7 +22,7 @@ def component(fact_id: str, amount: str, row: str) -> RecoveryComponent:
 
 def test_derives_npl_recovery_from_disposal_rows_only() -> None:
     result = derive_npl_recovery_cash(
-        entity_key="product:臻粹2026-2",
+        entity_key="report:臻粹2026-2",
         in_progress=component("in-progress", "30466642.99", "处置中"),
         completed=component("completed", "29941313.75", "本期处置完毕"),
     )

@@ -69,7 +69,7 @@ def test_rejects_derived_value_without_confirmed_inputs() -> None:
         ExtractionFact(
             fact_id="f2",
             field_id="npl_trustee_recovery_cash",
-            entity_key="product:test",
+            entity_key="report:test",
             status=FactStatus.DERIVED,
             value="0.6040795674",
             evidence=[evidence()],
@@ -104,3 +104,16 @@ def test_rejects_tranche_fact_without_security_key() -> None:
             evidence=[evidence()],
             effective_at=date(2026, 1, 1),
         )
+
+
+@pytest.mark.parametrize(
+    ("field_id", "entity_key", "message"),
+    [
+        ("asset_full_name", "security:123", "product key"),
+        ("latest_report_date", "product:test", "report key"),
+        ("cashflow_collection_table", "product:test", "cashflow_row key"),
+    ],
+)
+def test_rejects_entity_key_with_the_wrong_contract_grain(field_id: str, entity_key: str, message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        ExtractionFact(fact_id="wrong-grain", field_id=field_id, entity_key=entity_key, status=FactStatus.NOT_DISCLOSED)

@@ -6,6 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from npl_extract.intake import inspect_pdf
+from npl_extract.contracts import ExtractionFact
 from npl_extract.extract import (
     extract_issuance_announcement_facts,
     extract_issuance_result_ocr_facts,
@@ -38,7 +39,30 @@ def main(argv: list[str] | None = None) -> int:
     extract_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
     extract_command.add_argument("--native-parser", choices=["pypdf", "docling", "docling-ocr"], default="pypdf")
     extract_command.add_argument("--pages", type=_page_range)
+    export_command = commands.add_parser("export", help="project persisted facts to a 42-field workbook")
+    export_command.add_argument("--template", type=Path, required=True)
+    export_command.add_argument("--facts", type=Path, nargs="+", required=True)
+    export_command.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
+    if args.command == "export":
+        from npl_extract.export import export_facts
+
+        try:
+            facts = [
+                ExtractionFact.model_validate(json.loads(line))
+                for path in args.facts
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            export_facts(args.template, facts, args.output)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            print(_json({"error": str(error)}))
+            return 2
+        print(_json({"output": str(args.output), "fact_count": len(facts)}))
+        return 0
+    if args.command == "extract-trustee" and not args.entity_key.startswith("report:"):
+        print(_json([]))
+        return 3
     result = inspect_pdf(args.pdf)
     if args.command == "inspect" or not result.accepted:
         print(_json(asdict(result)))

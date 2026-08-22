@@ -4,6 +4,7 @@ import json
 from io import BytesIO
 from pathlib import Path
 
+from openpyxl import Workbook, load_workbook
 from pypdf import PdfWriter
 
 from npl_extract.cli import main
@@ -132,3 +133,97 @@ def test_extract_command_rejects_a_security_key_for_product_facts(tmp_path: Path
 
     assert exit_code == 3
     assert json.loads(capsys.readouterr().out) == []
+
+
+def test_extract_trustee_command_rejects_a_product_key_for_report_facts(tmp_path: Path, capsys, monkeypatch) -> None:
+    source = tmp_path / "受托报告.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    content = BytesIO()
+    writer.write(content)
+    source.write_bytes(content.getvalue())
+    monkeypatch.setattr(
+        "npl_extract.cli.extract_trustee_report_facts",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("extractor must not run")),
+    )
+
+    exit_code = main(["extract-trustee", str(source), "--entity-key", "product:test", "--runs-dir", str(tmp_path / "runs")])
+
+    assert exit_code == 3
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_export_command_projects_persisted_facts_to_a_template(tmp_path: Path, capsys) -> None:
+    template = tmp_path / "template.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"] = "资产全称"
+    workbook.save(template)
+    facts = tmp_path / "facts.jsonl"
+    facts.write_text(
+        json.dumps(
+            {
+                "fact_id": "asset-name",
+                "field_id": "asset_full_name",
+                "entity_key": "product:test",
+                "status": "disclosed",
+                "value": "臻粹不良资产支持证券",
+                "evidence": [
+                    {
+                        "evidence_id": "p001:b001",
+                        "artifact_scope": "pypdf-all",
+                        "document_name": "发行公告.pdf",
+                        "physical_page": 1,
+                        "locator": "公告标题",
+                        "exact_text": "臻粹不良资产支持证券发行公告",
+                    }
+                ],
+                "effective_at": None,
+                "rule_version": None,
+                "derived_inputs": [],
+                "confirmed": False,
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+    output = tmp_path / "export.xlsx"
+
+    exit_code = main(["export", "--template", str(template), "--facts", str(facts), "--output", str(output)])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["fact_count"] == 1
+    assert load_workbook(output)["product_test"]["B1"].value == "臻粹不良资产支持证券"
+
+
+def test_export_command_rejects_a_jsonl_fact_with_the_wrong_entity_grain(tmp_path: Path, capsys) -> None:
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+    facts = tmp_path / "facts.jsonl"
+    facts.write_text(
+        json.dumps(
+            {
+                "fact_id": "asset-name",
+                "field_id": "asset_full_name",
+                "entity_key": "security:2689075",
+                "status": "disclosed",
+                "value": "臻粹不良资产支持证券",
+                "evidence": [
+                    {
+                        "evidence_id": "p001:b001",
+                        "artifact_scope": "pypdf-all",
+                        "document_name": "发行公告.pdf",
+                        "physical_page": 1,
+                        "locator": "公告标题",
+                        "exact_text": "臻粹不良资产支持证券发行公告",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+
+    exit_code = main(["export", "--template", str(template), "--facts", str(facts), "--output", str(tmp_path / "export.xlsx")])
+
+    assert exit_code == 2
+    assert "product key" in json.loads(capsys.readouterr().out)["error"]

@@ -24,6 +24,15 @@ class ValuePolicy(str, Enum):
     DERIVED_ONLY = "derived_only"
 
 
+_ENTITY_KEY_PREFIXES = {
+    "product": "product:",
+    "tranche": "security:",
+    "report": "report:",
+    "cashflow_row": "cashflow_row:",
+}
+_ENTITY_KEY_LABELS = {"tranche": "security"}
+
+
 class EvidenceRef(BaseModel):
     evidence_id: str
     artifact_scope: str
@@ -81,8 +90,10 @@ class ExtractionFact(BaseModel):
                 raise ValueError("confirmed derived facts require confirmed inputs")
         if self.status in {FactStatus.NOT_APPLICABLE, FactStatus.NOT_DISCLOSED} and self.value is not None:
             raise ValueError("not-applicable and not-disclosed facts must not carry a value")
-        if contract.entity_grain == "tranche" and not self.entity_key.startswith("security:"):
-            raise ValueError("tranche facts require a security key")
+        prefix = _ENTITY_KEY_PREFIXES.get(contract.entity_grain)
+        if prefix and not self.entity_key.startswith(prefix):
+            label = _ENTITY_KEY_LABELS.get(contract.entity_grain, contract.entity_grain)
+            raise ValueError(f"{contract.entity_grain} facts require a {label} key")
         return self
 
 

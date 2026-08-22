@@ -19,9 +19,9 @@ This is a development coverage matrix, not a frozen gold set. “CLI verified”
 
 ## Current score
 
-- CLI verified: 6/12.
+- CLI verified: 7/12.
 - Function-level only: 1/12.
-- Pending: 5/12.
+- Pending: 4/12.
 - Secure product rating-report route: blocked only by a policy decision on quarantined `/URI` links; no action is executed and no bypass exists.
 
 ## Next non-model work

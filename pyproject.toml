@@ -22,6 +22,7 @@ ocr = [
     "paddlepaddle>=3,<4",
     "paddlex[ocr]>=3,<4",
 ]
+export = ["openpyxl>=3.1,<4"]
 
 [project.scripts]
 npl-extract = "npl_extract.cli:main"
