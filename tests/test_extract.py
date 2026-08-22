@@ -61,9 +61,13 @@ def test_extracts_only_unique_product_level_issue_amount_rows_from_the_prospectu
 
     assert {(fact.field_id, fact.value) for fact in facts} == {
         ("issue_amount_senior", "1.32"),
+        ("issue_amount_mezzanine", None),
         ("issue_amount_subordinated", "0.5"),
     }
-    assert all([evidence.evidence_id for evidence in fact.evidence] == ["p002:b001", fact.evidence[-1].evidence_id] for fact in facts)
+    mezzanine = next(fact for fact in facts if fact.field_id == "issue_amount_mezzanine")
+    assert mezzanine.status is FactStatus.NOT_APPLICABLE
+    assert mezzanine.evidence[-1].evidence_id == "p002:b004"
+    assert all([evidence.evidence_id for evidence in fact.evidence] == ["p002:b001", fact.evidence[-1].evidence_id] for fact in facts if fact.status is FactStatus.DISCLOSED)
 
 
 def test_refuses_equivalent_mezzanine_labels_with_conflicting_amounts() -> None:
@@ -102,6 +106,26 @@ def test_refuses_a_duplicate_issue_amount_row_later_in_the_same_table() -> None:
     ]
 
     assert extract_prospectus_issue_amount_facts(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
+
+
+def test_does_not_assert_mezzanine_not_applicable_when_an_extra_tier_row_exists() -> None:
+    pages = [
+        PageContent(
+            2,
+            "",
+            [
+                Block("p002:b001", 2, "证券名称 发行金额（万元）规模占比", None),
+                Block("p002:b002", 2, "优先档 100.00 40.00% 过手", None),
+                Block("p002:b003", 2, "劣后档资产支持证券 50.00 20.00% 过手", None),
+                Block("p002:b004", 2, "次级档 100.00 40.00% 过手", None),
+                Block("p002:b005", 2, "总计 250.00 100.00% -", None),
+            ],
+        )
+    ]
+
+    facts = extract_prospectus_issue_amount_facts(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all")
+
+    assert "issue_amount_mezzanine" not in {fact.field_id for fact in facts}
 
 
 def test_extracts_trustee_report_date_and_recovery_with_evidence() -> None:

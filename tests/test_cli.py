@@ -145,6 +145,7 @@ def test_extract_command_persists_prospectus_issue_amounts_without_associations(
     assert exit_code == 0
     assert {(fact["field_id"], fact["value"]) for fact in output} == {
         ("issue_amount_senior", "1.32"),
+        ("issue_amount_mezzanine", None),
         ("issue_amount_subordinated", "0.5"),
     }
 
