@@ -49,6 +49,11 @@ def _has_active_content(reader: PdfReader) -> FailureCode | None:
         page_data = _dictionary(page)
         if "/AA" in page_data:
             return FailureCode.ACTIVE_CONTENT
+        annotations = _dictionary(page_data.get("/Annots", []))
+        for annotation in annotations:
+            annotation_data = _dictionary(annotation)
+            if "/A" in annotation_data or "/AA" in annotation_data:
+                return FailureCode.ACTIVE_CONTENT
     return None
 
 

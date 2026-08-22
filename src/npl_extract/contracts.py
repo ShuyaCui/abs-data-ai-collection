@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import date
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic import BaseModel, Field, model_validator
@@ -15,6 +16,12 @@ class FactStatus(str, Enum):
     NOT_DISCLOSED = "not_disclosed"
     AMBIGUOUS = "ambiguous"
     PENDING_DEFINITION = "pending_definition"
+
+
+class ValuePolicy(str, Enum):
+    DIRECT_ONLY = "direct_only"
+    DIRECT_OR_DERIVED = "direct_or_derived"
+    DERIVED_ONLY = "derived_only"
 
 
 class EvidenceRef(BaseModel):
@@ -31,6 +38,7 @@ class FactInput(BaseModel):
 
 
 class FieldContract(BaseModel):
+    contract_version: str
     field_id: str = Field(alias="id")
     export_name: str
     entity_grain: str
@@ -38,6 +46,10 @@ class FieldContract(BaseModel):
     unit: str | None
     critical: bool
     pending_definition: bool = False
+    value_policy: ValuePolicy
+    allowed_statuses: frozenset[FactStatus]
+    source_families: tuple[str, ...]
+    source_precedence: tuple[str, ...]
 
 
 class ExtractionFact(BaseModel):
@@ -54,6 +66,11 @@ class ExtractionFact(BaseModel):
 
     @model_validator(mode="after")
     def enforce_fact_contract(self) -> ExtractionFact:
+        contract = load_field_contracts().get(self.field_id)
+        if contract is None:
+            raise ValueError("unknown field")
+        if self.status not in contract.allowed_statuses:
+            raise ValueError(f"field {self.field_id} does not allow status {self.status.value}")
         if self.status is FactStatus.DISCLOSED and (self.value is None or not self.evidence):
             raise ValueError("disclosed facts require a value and evidence")
         if self.status is FactStatus.DERIVED:
@@ -63,28 +80,34 @@ class ExtractionFact(BaseModel):
                 raise ValueError("confirmed derived facts require confirmed inputs")
         if self.status in {FactStatus.NOT_APPLICABLE, FactStatus.NOT_DISCLOSED} and self.value is not None:
             raise ValueError("not-applicable and not-disclosed facts must not carry a value")
-        if self.field_id in _TRANCHE_FIELDS and not self.entity_key.startswith("security:"):
+        if contract.entity_grain == "tranche" and not self.entity_key.startswith("security:"):
             raise ValueError("tranche facts require a security key")
         return self
 
 
-_TRANCHE_FIELDS = {
-    "security_code",
-    "issue_rating",
-    "bond_type_level_1",
-    "bond_type_level_3",
-    "maturity_date",
-    "tranche_issue_amount",
-    "tranche_current_balance",
-    "tranche_level",
-    "interest_payment_frequency",
-    "first_interest_payment_date",
-    "period_yield",
-    "unit_remaining_face_value",
+_STATUSES_BY_POLICY = {
+    ValuePolicy.DIRECT_ONLY: frozenset(
+        {FactStatus.DISCLOSED, FactStatus.NOT_APPLICABLE, FactStatus.NOT_DISCLOSED, FactStatus.AMBIGUOUS}
+    ),
+    ValuePolicy.DIRECT_OR_DERIVED: frozenset(
+        {FactStatus.DISCLOSED, FactStatus.DERIVED, FactStatus.NOT_APPLICABLE, FactStatus.NOT_DISCLOSED, FactStatus.AMBIGUOUS}
+    ),
+    ValuePolicy.DERIVED_ONLY: frozenset(
+        {FactStatus.DERIVED, FactStatus.NOT_APPLICABLE, FactStatus.NOT_DISCLOSED, FactStatus.AMBIGUOUS}
+    ),
 }
 
 
+@lru_cache(maxsize=1)
 def load_field_contracts() -> dict[str, FieldContract]:
     path = Path(__file__).parents[2] / "config" / "fields.v1.json"
-    fields = [FieldContract.model_validate(item) for item in json.loads(path.read_text())]
+    document = json.loads(path.read_text())
+    fields = []
+    for item in document["fields"]:
+        field = {**document["defaults"], **item, "contract_version": document["version"]}
+        policy = ValuePolicy(field["value_policy"])
+        field["allowed_statuses"] = _STATUSES_BY_POLICY[policy] | (
+            {FactStatus.PENDING_DEFINITION} if field.get("pending_definition") else set()
+        )
+        fields.append(FieldContract.model_validate(field))
     return {field.field_id: field for field in fields}

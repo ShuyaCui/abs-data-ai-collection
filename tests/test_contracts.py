@@ -30,6 +30,26 @@ def test_loads_all_42_versioned_field_contracts() -> None:
     assert len(contracts) == 42
     assert contracts["npl_trustee_recovery_cash"].export_name == "NPL-受托已回收（亿）"
     assert contracts["bond_type_level_1"].pending_definition
+    assert contracts["security_code"].contract_version == "v1"
+    assert FactStatus.DERIVED not in contracts["security_code"].allowed_statuses
+    assert FactStatus.DERIVED in contracts["npl_trustee_recovery_cash"].allowed_statuses
+    assert contracts["latest_report_date"].source_precedence
+
+
+def test_rejects_unknown_fields_and_disallowed_statuses() -> None:
+    with pytest.raises(ValidationError, match="unknown field"):
+        ExtractionFact(fact_id="unknown", field_id="not-a-field", entity_key="product:test", status=FactStatus.NOT_DISCLOSED)
+    with pytest.raises(ValidationError, match="does not allow"):
+        ExtractionFact(
+            fact_id="wrong-status",
+            field_id="security_code",
+            entity_key="security:123",
+            status=FactStatus.DERIVED,
+            value="123",
+            evidence=[evidence()],
+            rule_version="test-v1",
+            derived_inputs=[FactInput(fact_id="input", confirmed=True)],
+        )
 
 
 def test_rejects_disclosed_value_without_evidence() -> None:

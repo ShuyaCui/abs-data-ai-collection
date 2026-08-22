@@ -9,3 +9,14 @@
 - Implemented the accepted NPL recovery rule: `处置中累计回收 + 处置完毕累计回收`, excluding other income and qualified investments, before disposal expenses.
 - Verified 15 offline tests pass.
 - Downloaded and SHA-512 checked `@deepseek-ai/dsh@0.1.0-rc.8` with `npm pack`. The matching GitHub release exists, while the published Python SDK is only `rc.7`; the implementation will not substitute it for the approved `rc.8` runtime.
+
+## 2026-08-22 — Safe local parsing and route evaluation
+
+- Initialized Git branch `dev` and committed the foundation as `557da93`.
+- Installed the lockfile-pinned DeepSeek Harness and verified `dsh --version` is `0.1.0-rc.8`.
+- Repaired the page-artifact completion invariant: incomplete or stale-version artifacts are regenerated rather than reused.
+- Added a local CLI: `npl-extract inspect` and `npl-extract parse`.
+- Added native-text parsing through `pypdf` as a geometry-free fallback and tightened the native-text gate to eight useful characters.
+- Added a test rejecting annotation `/Launch` actions.
+- Evaluated routing on 751 real sample pages; see `docs/evaluations/2026-08-22-page-routing-sample.md`.
+- Extracted and value-checked the first deterministic trustee-report slice: `最新报告日期` and `NPL-受托已回收（亿）`. Both remain provisional until geometry-capable parser evidence is available.
