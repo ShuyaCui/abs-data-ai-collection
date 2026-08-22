@@ -6,6 +6,7 @@ from npl_extract.extract import (
     extract_issuance_result_ocr_facts,
     extract_prospectus_issue_amount_facts,
     extract_prospectus_market_facts,
+    extract_prospectus_actual_financing_entity_facts,
     extract_prospectus_revolving_purchase_fact,
     extract_prospectus_issue_rating_facts,
     extract_prospectus_first_interest_payment_facts,
@@ -97,6 +98,117 @@ def test_extracts_a_static_pool_as_no_revolving_purchase_with_split_evidence() -
     assert facts[0].field_id == "has_revolving_purchase"
     assert facts[0].value is False
     assert [evidence.evidence_id for evidence in facts[0].evidence] == ["p090:b005", "p090:b006"]
+
+
+def test_extracts_the_actual_financing_entity_only_from_the_sponsor_role_listing() -> None:
+    pages = [
+        PageContent(
+            16,
+            "",
+            [
+                Block("p016:b020", 16, "二、各参与机构名单", None),
+                Block("p016:b021", 16, "（一）发起机构/贷款服务机构：广发银行股份有限公司（简称“广发", None),
+                Block("p016:b022", 16, "银行”）", None),
+            ],
+        )
+    ]
+
+    facts = extract_prospectus_actual_financing_entity_facts(
+        pages, "臻粹2026年第二期不良资产支持证券发行说明书.pdf", "product:臻粹2026-2", "pypdf-all"
+    )
+
+    assert len(facts) == 1
+    assert facts[0].field_id == "actual_financing_entity"
+    assert facts[0].value == ["广发银行股份有限公司"]
+    assert [evidence.evidence_id for evidence in facts[0].evidence] == ["p016:b020", "p016:b021", "p016:b022"]
+
+
+def test_refuses_a_cover_page_sponsor_role_without_the_participant_list_heading() -> None:
+    pages = [
+        PageContent(2, "", [Block("p002:b001", 2, "发起机构/贷款服务机构：广发银行股份有限公司（简称广发银行）", None)])
+    ]
+
+    assert extract_prospectus_actual_financing_entity_facts(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
+
+
+def test_refuses_two_complete_sponsor_listings_in_one_participant_list_block() -> None:
+    pages = [
+        PageContent(
+            16,
+            "",
+            [
+                Block("p016:b020", 16, "二、各参与机构名单", None),
+                Block(
+                    "p016:b021",
+                    16,
+                    "发起机构/贷款服务机构：甲银行股份有限公司（简称甲行） 发起机构/贷款服务机构：乙银行股份有限公司（简称乙行）",
+                    None,
+                ),
+            ],
+        )
+    ]
+
+    assert extract_prospectus_actual_financing_entity_facts(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
+
+
+def test_refuses_an_unclosed_sponsor_listing() -> None:
+    pages = [
+        PageContent(
+            16,
+            "",
+            [
+                Block("p016:b020", 16, "二、各参与机构名单", None),
+                Block("p016:b021", 16, "发起机构/贷款服务机构：广发银行股份有限公司（简称广发银行", None),
+            ],
+        )
+    ]
+
+    assert extract_prospectus_actual_financing_entity_facts(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
+
+
+def test_refuses_a_valid_sponsor_listing_followed_by_an_unclosed_duplicate() -> None:
+    pages = [
+        PageContent(
+            16,
+            "",
+            [
+                Block("p016:b020", 16, "二、各参与机构名单", None),
+                Block("p016:b021", 16, "发起机构/贷款服务机构：甲银行股份有限公司（简称甲行）发起机构/贷款服务机构：乙银行股份有限公司（简称乙行", None),
+            ],
+        )
+    ]
+
+    assert extract_prospectus_actual_financing_entity_facts(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
+
+
+def test_refuses_role_prose_mixed_into_the_sponsor_name() -> None:
+    pages = [
+        PageContent(
+            16,
+            "",
+            [
+                Block("p016:b020", 16, "二、各参与机构名单", None),
+                Block("p016:b021", 16, "发起机构/贷款服务机构：受托机构为乙信托有限公司（简称乙信托）", None),
+            ],
+        )
+    ]
+
+    assert extract_prospectus_actual_financing_entity_facts(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
+
+
+def test_refuses_multiple_companies_in_one_sponsor_role_listing() -> None:
+    pages = [
+        PageContent(
+            16,
+            "",
+            [
+                Block("p016:b020", 16, "二、各参与机构名单", None),
+                Block("p016:b021", 16, "发起机构/贷款服务机构：甲银行股份有限公司、乙银行股份有限公司（简称甲乙）", None),
+            ],
+        )
+    ]
+
+    assert extract_prospectus_actual_financing_entity_facts(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
 
 
 def test_refuses_static_pool_text_repeated_inside_one_evidence_pair() -> None:

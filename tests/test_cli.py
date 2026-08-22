@@ -174,6 +174,34 @@ def test_extract_command_persists_prospectus_market_terms_without_associations(t
     }
 
 
+def test_extract_command_persists_a_participant_list_financing_entity(tmp_path: Path, capsys, monkeypatch) -> None:
+    source = tmp_path / "臻粹不良资产支持证券发行说明书.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    content = BytesIO()
+    writer.write(content)
+    source.write_bytes(content.getvalue())
+    monkeypatch.setattr(
+        "npl_extract.cli.parse_native_pdf_isolated",
+        lambda *args, **kwargs: [
+            PageContent(
+                16,
+                "",
+                [
+                    Block("p016:b020", 16, "二、各参与机构名单", None),
+                    Block("p016:b021", 16, "发起机构/贷款服务机构：广发银行股份有限公司（简称广发银行）", None),
+                ],
+            )
+        ],
+    )
+
+    exit_code = main(["extract", str(source), "--entity-key", "product:test", "--runs-dir", str(tmp_path / "runs")])
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert [(fact["field_id"], fact["value"]) for fact in output] == [("actual_financing_entity", ["广发银行股份有限公司"])]
+
+
 def test_extract_command_rejects_a_security_key_for_product_facts(tmp_path: Path, capsys, monkeypatch) -> None:
     source = tmp_path / "臻粹不良资产支持证券发行公告.pdf"
     writer = PdfWriter()

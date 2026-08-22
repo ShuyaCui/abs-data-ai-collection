@@ -34,6 +34,7 @@ _FIRST_INTEREST_PAYMENT = re.compile(r"资产支持证券的第一个支付日�
 _PROSPECTUS_ISSUE_AMOUNT_ROW = re.compile(r"^(优先档|次优[档级]|次级档)\s+([\d,]+(?:\.\d+)?)\s+\d+(?:\.\d+)?%\s+.+$")
 _PROSPECTUS_TIER_AMOUNT_ROW = re.compile(r"^.+[档级]\S*\s+[\d,]+(?:\.\d+)?\s+\d+(?:\.\d+)?%\s+.+$")
 _PROSPECTUS_ISSUANCE_ROUTE = re.compile(r"本期资产支持证券拟采用公开簿记建档的方式在全国银行间债券市场发行")
+_PROSPECTUS_SPONSOR = re.compile(r"发起机构/贷款服务机构：([^（(。；;]+)（简称[^）)]*[）)]")
 _PROSPECTUS_RATING_ROW = re.compile(r"^(优先档|次级档)\s+.+\s+(无评级|[A-Za-z][A-Za-z0-9+.-]*(?:/[A-Za-z][A-Za-z0-9+.-]*)?)\s*$")
 
 
@@ -536,6 +537,54 @@ def extract_prospectus_revolving_purchase_fact(
             value=False,
             evidence=[
                 _evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "基础资产筛选标准/静态池及不购买资产", block.exact_text)
+                for block in evidence_blocks
+            ],
+        )
+    ]
+
+
+def extract_prospectus_actual_financing_entity_facts(
+    pages: list[PageContent], document_name: str, entity_key: str, artifact_scope: str
+) -> list[ExtractionFact]:
+    """Use the explicit sponsor/loan-servicer role, never a cover-page role guess."""
+    if not _product_name(document_name, "发行说明书"):
+        return []
+    candidates = []
+    for page in pages:
+        if page.ocr_requested:
+            continue
+        for index, block in enumerate(page.blocks):
+            if "发起机构/贷款服务机构" not in re.sub(r"\s+", "", block.exact_text):
+                continue
+            headings = [item for item in page.blocks[max(0, index - 2) : index] if "各参与机构名单" in re.sub(r"\s+", "", item.exact_text)]
+            if len(headings) != 1:
+                continue
+            evidence = [block]
+            normalized = re.sub(r"\s+", "", block.exact_text)
+            matches = list(_PROSPECTUS_SPONSOR.finditer(normalized))
+            if not matches and index + 1 < len(page.blocks):
+                evidence.append(page.blocks[index + 1])
+                normalized = re.sub(r"\s+", "", "".join(item.exact_text for item in evidence))
+                matches = list(_PROSPECTUS_SPONSOR.finditer(normalized))
+            if normalized.count("发起机构/贷款服务机构：") != 1:
+                continue
+            candidates.extend(
+                (page, [headings[0], *evidence], match.group(1))
+                for match in matches
+                if not any(term in match.group(1) for term in ("发起机构", "贷款服务机构", "受托机构", "为", "、", "，", ",", "及"))
+            )
+    if len(candidates) != 1:
+        return []
+    page, evidence_blocks, sponsor = candidates[0]
+    return [
+        ExtractionFact(
+            fact_id=f"disclosed:actual-financing-entity:{evidence_blocks[1].evidence_id}",
+            field_id="actual_financing_entity",
+            entity_key=entity_key,
+            status=FactStatus.DISCLOSED,
+            value=[sponsor],
+            evidence=[
+                _evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "参与机构名单/发起机构及贷款服务机构", block.exact_text)
                 for block in evidence_blocks
             ],
         )
