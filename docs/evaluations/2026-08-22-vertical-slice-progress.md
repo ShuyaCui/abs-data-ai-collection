@@ -1,4 +1,4 @@
-# Twelve-field vertical-slice progress — 2026-08-22
+# Thirteen-field vertical-slice progress — 2026-08-22
 
 This is a development coverage matrix, not a frozen gold set. “CLI verified” means the real sample passed secure intake, parsing, fact persistence and evidence emission.
 
@@ -16,12 +16,13 @@ This is a development coverage matrix, not a frozen gold set. “CLI verified”
 | 25 | `latest_report_date` | CLI verified | fourth trustee report, page 1 |
 | 35 | `npl_trustee_recovery_cash` | CLI verified | fourth trustee report, pages 7 inputs and versioned derivation |
 | 39 | `cashflow_collection_table` | pending | native-x86 PP-Structure table/cell-coordinate preflight remains open |
+| 40 | `unit_remaining_face_value` | function-level verified | actual issuance amount + prospectus p120/p121 initial face value + fourth trustee-report balance, effective 2026-08-24 |
 
 ## Current score
 
-- CLI verified: 10/12.
-- Function-level only: 1/12.
-- Pending: 1/12.
+- CLI verified: 10/13.
+- Function-level only: 2/13.
+- Pending: 1/13.
 - Secure product rating-report route: blocked only by a policy decision on quarantined `/URI` links; no action is executed and no bypass exists.
 
 ## Next non-model work

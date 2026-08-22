@@ -13,6 +13,7 @@ from npl_extract.extract import (
     extract_issuance_announcement_facts,
     extract_issuance_result_ocr_facts,
     extract_prospectus_issue_amount_facts,
+    extract_prospectus_initial_face_value_facts,
     extract_prospectus_market_facts,
     extract_prospectus_actual_financing_entity_facts,
     extract_prospectus_revolving_purchase_fact,
@@ -135,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
                     return 2
                 facts.extend(extract_prospectus_first_interest_payment_facts(pages, document_name, association_facts, scope))
                 facts.extend(extract_prospectus_issue_rating_facts(pages, document_name, association_facts, scope))
+                facts.extend(extract_prospectus_initial_face_value_facts(pages, document_name, association_facts, scope))
         else:
             facts = []
         if facts:

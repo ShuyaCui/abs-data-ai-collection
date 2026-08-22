@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import re
 from pathlib import Path
 
@@ -36,6 +36,8 @@ _PROSPECTUS_TIER_AMOUNT_ROW = re.compile(r"^.+[档级]\S*\s+[\d,]+(?:\.\d+)?\s+\
 _PROSPECTUS_ISSUANCE_ROUTE = re.compile(r"本期资产支持证券拟采用公开簿记建档的方式在全国银行间债券市场发行")
 _PROSPECTUS_SPONSOR = re.compile(r"发起机构/贷款服务机构：([^（(。；;]+)（简称[^）)]*[）)]")
 _PROSPECTUS_RATING_ROW = re.compile(r"^(优先档|次级档)\s+.+\s+(无评级|[A-Za-z][A-Za-z0-9+.-]*(?:/[A-Za-z][A-Za-z0-9+.-]*)?)\s*$")
+_PROSPECTUS_BASIC_FEATURES = re.compile(r"^(?:\d+\.)?[“\"]?(优先档|次级档)资产支持证券[”\"]?的基本特征[：:]?$")
+_PROSPECTUS_INITIAL_FACE_VALUE = re.compile(r"^（2）面值：每张“(优先档|次级档)资产支持证券”的面值为人民币(\d+(?:\.\d+)?)元。$")
 
 
 def derive_npl_recovery_cash(
@@ -57,6 +59,73 @@ def derive_npl_recovery_cash(
             FactInput(fact_id=completed.fact_id, confirmed=False),
         ],
     )
+
+
+def derive_unit_remaining_face_values(
+    issue_amounts: list[ExtractionFact], balances: list[ExtractionFact], initial_face_values: list[ExtractionFact]
+) -> list[ExtractionFact]:
+    """Derive current principal per security's evidenced initial face value."""
+    amounts = _unique_decimal_facts(issue_amounts, "tranche_issue_amount", require_effective_at=False)
+    current_balances = _unique_decimal_facts(balances, "tranche_current_balance", require_effective_at=True)
+    faces = _unique_decimal_facts(initial_face_values, "tranche_initial_face_value", require_effective_at=False)
+    if (
+        amounts is None
+        or current_balances is None
+        or faces is None
+        or set(amounts) != set(current_balances)
+        or set(amounts) != set(faces)
+        or len({fact.effective_at for fact in current_balances.values()}) != 1
+    ):
+        return []
+    facts = []
+    for entity_key, balance in sorted(current_balances.items()):
+        issue = amounts[entity_key]
+        face = faces[entity_key]
+        amount, current, initial_face = Decimal(issue.value), Decimal(balance.value), Decimal(face.value)
+        if amount <= 0 or initial_face <= 0 or not 0 <= current <= amount:
+            return []
+        facts.append(
+            ExtractionFact(
+                fact_id=f"derived:unit-remaining-face-value:{issue.fact_id}:{balance.fact_id}:{face.fact_id}",
+                field_id="unit_remaining_face_value",
+                entity_key=entity_key,
+                status=FactStatus.DERIVED,
+                value=format((current / amount * initial_face).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), "f"),
+                effective_at=balance.effective_at,
+                evidence=[*issue.evidence, *balance.evidence, *face.evidence],
+                rule_version="unit-remaining-face-value-v1",
+                derived_inputs=[
+                    FactInput(fact_id=issue.fact_id, confirmed=issue.confirmed),
+                    FactInput(fact_id=balance.fact_id, confirmed=balance.confirmed),
+                    FactInput(fact_id=face.fact_id, confirmed=face.confirmed),
+                ],
+            )
+        )
+    return facts
+
+
+def _unique_decimal_facts(
+    facts: list[ExtractionFact], field_id: str, *, require_effective_at: bool
+) -> dict[str, ExtractionFact] | None:
+    result = {}
+    for fact in facts:
+        if fact.field_id != field_id:
+            continue
+        if (
+            fact.status is not FactStatus.DISCLOSED
+            or not fact.entity_key.startswith("security:")
+            or not isinstance(fact.value, str)
+            or (require_effective_at and fact.effective_at is None)
+            or fact.entity_key in result
+        ):
+            return None
+        try:
+            if not Decimal(fact.value).is_finite():
+                return None
+        except ArithmeticError:
+            return None
+        result[fact.entity_key] = fact
+    return result
 
 
 def extract_trustee_report_facts(
@@ -398,6 +467,51 @@ def extract_prospectus_first_interest_payment_facts(
             )
         )
     return facts
+
+
+def extract_prospectus_initial_face_value_facts(
+    pages: list[PageContent], document_name: str, association_facts: list[ExtractionFact], artifact_scope: str
+) -> list[ExtractionFact]:
+    """Extract one evidenced initial face value for each associated tranche."""
+    associations = _resolve_tranche_associations(association_facts, _product_name(document_name, "发行说明书"))
+    if not associations:
+        return []
+    candidates = {}
+    for page in pages:
+        if page.ocr_requested:
+            continue
+        heading = None
+        for block in page.blocks:
+            text = re.sub(r"\s+", "", block.exact_text)
+            if match := _PROSPECTUS_BASIC_FEATURES.fullmatch(text):
+                heading = (match.group(1), block)
+                continue
+            if not (match := _PROSPECTUS_INITIAL_FACE_VALUE.fullmatch(text)):
+                continue
+            level, value = match.groups()
+            if heading is None or heading[0] != level or level not in associations or level in candidates:
+                return []
+            if Decimal(value) <= 0:
+                return []
+            candidates[level] = (page, heading[1], block, format(Decimal(value).normalize(), "f"))
+    if set(candidates) != set(associations):
+        return []
+    return [
+        ExtractionFact(
+            fact_id=f"disclosed:tranche-initial-face-value:{association.entity_key}:{block.evidence_id}",
+            field_id="tranche_initial_face_value",
+            entity_key=association.entity_key,
+            status=FactStatus.DISCLOSED,
+            value=value,
+            evidence=[
+                _evidence(heading.evidence_id, artifact_scope, document_name, page.physical_page, "资产支持证券基本特征", heading.exact_text),
+                _evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "资产支持证券基本特征/面值", block.exact_text),
+                *association.evidence,
+            ],
+        )
+        for level, association in sorted(associations.items())
+        for page, heading, block, value in [candidates[level]]
+    ]
 
 
 def extract_prospectus_issue_amount_facts(

@@ -34,6 +34,8 @@ def test_loads_all_42_versioned_field_contracts() -> None:
     assert contracts["security_code"].contract_version == "v1"
     assert FactStatus.DERIVED not in contracts["security_code"].allowed_statuses
     assert FactStatus.DERIVED in contracts["npl_trustee_recovery_cash"].allowed_statuses
+    assert contracts["unit_remaining_face_value"].unit == "CNY"
+    assert FactStatus.DERIVED in contracts["unit_remaining_face_value"].allowed_statuses
     assert contracts["latest_report_date"].source_precedence
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from npl_extract.contracts import EvidenceRef, ExtractionFact, FactStatus
 from npl_extract.extract import (
     RecoveryComponent,
@@ -9,8 +11,10 @@ from npl_extract.extract import (
     extract_prospectus_actual_financing_entity_facts,
     extract_prospectus_revolving_purchase_fact,
     extract_prospectus_issue_rating_facts,
+    extract_prospectus_initial_face_value_facts,
     extract_prospectus_first_interest_payment_facts,
     extract_trustee_report_facts,
+    derive_unit_remaining_face_values,
     derive_npl_recovery_cash,
 )
 from npl_extract.parsers import Block, PageContent
@@ -42,6 +46,103 @@ def test_derives_npl_recovery_from_disposal_rows_only() -> None:
     assert result.value == "0.6040795674"
     assert [item.fact_id for item in result.derived_inputs] == ["in-progress", "completed"]
     assert all("其他收入" not in evidence.locator for evidence in result.evidence)
+
+
+def test_derives_unit_remaining_face_values_from_matching_security_facts() -> None:
+    issue_amounts = [
+        ExtractionFact(
+            fact_id=f"issue-{code}",
+            field_id="tranche_issue_amount",
+            entity_key=f"security:{code}",
+            status=FactStatus.DISCLOSED,
+            value=amount,
+            evidence=[
+                EvidenceRef(
+                    evidence_id=f"p001:{code}", artifact_scope="docling-ocr-all", document_name="簿记建档发行结果公告.pdf",
+                    physical_page=1, locator="实际发行总额", exact_text=amount,
+                )
+            ],
+        )
+        for code, amount in (("2689075", "1.32"), ("2689076", "0.5"))
+    ]
+    balances = [
+        ExtractionFact(
+            fact_id=f"balance-{code}",
+            field_id="tranche_current_balance",
+            entity_key=f"security:{code}",
+            status=FactStatus.DISCLOSED,
+            value=amount,
+            effective_at=date(2026, 8, 24),
+            evidence=[
+                EvidenceRef(
+                    evidence_id=f"p006:{code}", artifact_scope="pypdf-pages-1-6", document_name="第4期受托机构报告.pdf",
+                    physical_page=6, locator="本息兑付后剩余本金值", exact_text=amount,
+                )
+            ],
+        )
+        for code, amount in (("2689075", "0.839784"), ("2689076", "0.5"))
+    ]
+    face_values = [
+        ExtractionFact(
+            fact_id=f"face-{code}", field_id="tranche_initial_face_value", entity_key=f"security:{code}",
+            status=FactStatus.DISCLOSED, value="100",
+            evidence=[EvidenceRef(evidence_id=f"p120:{code}", artifact_scope="pypdf", document_name="发行说明书.pdf", physical_page=120, locator="面值", exact_text="100")],
+        )
+        for code in ("2689075", "2689076")
+    ]
+
+    facts = derive_unit_remaining_face_values(issue_amounts, balances, face_values)
+
+    assert {(fact.entity_key, fact.value) for fact in facts} == {("security:2689075", "63.62"), ("security:2689076", "100.00")}
+    assert all(fact.status is FactStatus.DERIVED and fact.effective_at == date(2026, 8, 24) for fact in facts)
+    assert all([item.fact_id for item in fact.derived_inputs] == [f"issue-{fact.entity_key.removeprefix('security:')}", f"balance-{fact.entity_key.removeprefix('security:')}", f"face-{fact.entity_key.removeprefix('security:')}"] for fact in facts)
+    rounded = derive_unit_remaining_face_values(
+        [issue_amounts[0].model_copy(update={"value": "1"})],
+        [balances[0].model_copy(update={"value": "0.63625"})],
+        [face_values[0]],
+    )
+    assert rounded[0].value == "63.63"
+
+
+def test_refuses_unit_remaining_face_values_without_one_unique_positive_issue_amount() -> None:
+    balance = ExtractionFact(
+        fact_id="balance", field_id="tranche_current_balance", entity_key="security:2689075", status=FactStatus.DISCLOSED,
+        value="0.839784", effective_at=date(2026, 8, 24),
+        evidence=[EvidenceRef(evidence_id="p006:b013", artifact_scope="pypdf", document_name="受托机构报告.pdf", physical_page=6, locator="余额", exact_text="0.839784")],
+    )
+    issue = ExtractionFact(
+        fact_id="issue", field_id="tranche_issue_amount", entity_key="security:2689075", status=FactStatus.DISCLOSED,
+        value="0", evidence=[EvidenceRef(evidence_id="p001:b009", artifact_scope="ocr", document_name="发行结果公告.pdf", physical_page=1, locator="发行额", exact_text="0")],
+    )
+
+    face = ExtractionFact(fact_id="face", field_id="tranche_initial_face_value", entity_key="security:2689075", status=FactStatus.DISCLOSED, value="100", evidence=issue.evidence)
+
+    assert derive_unit_remaining_face_values([issue], [balance], [face]) == []
+    assert derive_unit_remaining_face_values([issue.model_copy(update={"value": "NaN"})], [balance], [face]) == []
+    assert derive_unit_remaining_face_values([issue.model_copy(update={"value": "1.32"})], [balance.model_copy(update={"value": "1.320001"})], [face]) == []
+    assert derive_unit_remaining_face_values([issue.model_copy(update={"value": "1.32"})], [balance], []) == []
+
+
+def test_extracts_initial_face_values_from_matching_prospectus_feature_sections() -> None:
+    associations = [
+        ExtractionFact(
+            fact_id=f"level-{code}", field_id="tranche_level", entity_key=f"security:{code}", status=FactStatus.DISCLOSED,
+            value=level,
+            evidence=[EvidenceRef(evidence_id=f"p001:{code}", artifact_scope="ocr", document_name="臻粹2026年第二期不良资产证券簿记建档发行结果公告.pdf", physical_page=1, locator="证券名称", exact_text=level)],
+        )
+        for code, level in (("2689075", "优先档"), ("2689076", "次级档"))
+    ]
+    pages = [
+        PageContent(120, "", [Block("p120:b005", 120, "1. “优先档资产支持证券”的基本特征：", None), Block("p120:b009", 120, "（2）面值：每张“优先档资产支持证券”的面值为人民币 100 元。", None)]),
+        PageContent(121, "", [Block("p121:b006", 121, "2. 次级档资产支持证券的基本特征", None), Block("p121:b010", 121, "（2）面值：每张“次级档资产支持证券”的面值为人民币 100 元。", None)]),
+    ]
+
+    facts = extract_prospectus_initial_face_value_facts(
+        pages, "臻粹2026年第二期不良资产证券发行说明书.pdf", associations, "pypdf-pages-120-121"
+    )
+
+    assert {(fact.entity_key, fact.value) for fact in facts} == {("security:2689075", "100"), ("security:2689076", "100")}
+    assert all(fact.field_id == "tranche_initial_face_value" and len(fact.evidence) == 3 for fact in facts)
 
 
 def test_extracts_the_normalized_market_and_issuance_method_from_one_unique_prospectus_statement() -> None:
