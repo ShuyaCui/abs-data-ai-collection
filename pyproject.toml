@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "npl-extract"
+version = "0.1.0"
+description = "Evidence-grounded extraction for Chinese NPL ABS PDFs"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.12,<3",
+  "pypdf>=6.0,<7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9"]
+
+[project.scripts]
+npl-extract = "npl_extract.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/npl_extract"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

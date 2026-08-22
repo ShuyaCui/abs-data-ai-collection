@@ -1,0 +1,12 @@
+.venv/
+.DS_Store
+.uv-cache/
+.uv-python/
+.pytest_cache/
+node_modules/
+__pycache__/
+*.pyc
+runs/
+*.pdf
+*.zip
+*.xlsx
