@@ -13,3 +13,4 @@ Native-text rating-report sample: `臻粹2026年第二期不良资产支持证�
 - The CNY value is converted deterministically from the report's `314,258.72 万元`.
 - The extractor accepts exactly one candidate in the verified local `资产池特征` context; otherwise it returns no fact.
 - The extractor explicitly skips `ocr_requested` pages. The companion 中债资信 rating report is pure scan under native parsing and correctly returns no fact; it remains an OCR validation item.
+- The current secure CLI quarantines this 中诚信国际 source because page 4 contains a `/URI` link action. The field result above is a function-level native-parser evaluation only; it is not yet a secure end-to-end CLI result. No action is executed.

@@ -24,6 +24,9 @@ _INITIAL_CUTOFF = re.compile(r"初始起算日\s*(\d{4})\s*年\s*(\d{1,2})\s*月
 _ISSUE_TOTAL = re.compile(r"发行规模为\s*([\d,]+(?:\.\d+)?)\s*元")
 _INITIAL_POOL_BALANCE = re.compile(r"资产池未偿本息\s*费余额\s*([\d,]+(?:\.\d+)?)\s*万元")
 _INITIAL_POOL_SECTION = re.compile(r"资产池特征\s*[（(]\s*于初始起算日\s*[）)]")
+_SECURITY_CODE = re.compile(r"^\d{7}$")
+_EXPECTED_MATURITY = re.compile(r"^(\d{4})年(\d{1,2})月(\d{1,2})日$")
+_AMOUNT_IN_TEN_THOUSANDS = re.compile(r"^([\d,]+(?:\.\d+)?)万元$")
 
 
 def derive_npl_recovery_cash(
@@ -201,6 +204,70 @@ def extract_issuance_announcement_facts(
                 evidence=evidence,
             )
         )
+    return facts
+
+
+def extract_issuance_result_ocr_facts(
+    pages: list[PageContent], document_name: str, artifact_scope: str
+) -> list[ExtractionFact]:
+    """Extract complete tranche records from OCR of an issuance-result announcement."""
+    if "簿记建档发行结果公告" not in document_name or not pages:
+        return []
+    product_name = Path(document_name).stem.removesuffix("簿记建档发行结果公告")
+    first_page = next((page for page in pages if page.physical_page == 1 and page.ocr_requested), None)
+    title = next((block for block in first_page.blocks if block.exact_text.strip()), None) if first_page else None
+    if title is None or not re.sub(r"\s+", "", title.exact_text).startswith(f"{product_name}簿记建档发行结果公告"):
+        return []
+    records = []
+    for page in pages:
+        if not page.ocr_requested:
+            continue
+        values = {"security_code": [], "maturity_date": [], "tranche_issue_amount": []}
+        labels_seen = set()
+        for index, block in enumerate(page.blocks):
+            label = re.sub(r"\s+", "", block.exact_text)
+            if label in {"证券代码", "预期到期日", "实际发行总额"}:
+                labels_seen.add(label)
+            if index + 1 == len(page.blocks):
+                continue
+            value_block = page.blocks[index + 1]
+            value = re.sub(r"\s+", "", value_block.exact_text)
+            if label == "证券代码" and _SECURITY_CODE.fullmatch(value):
+                values["security_code"].append((value, block, value_block))
+            elif label == "预期到期日" and (match := _EXPECTED_MATURITY.fullmatch(value)):
+                try:
+                    maturity = date(int(match.group(1)), int(match.group(2)), int(match.group(3))).isoformat()
+                except ValueError:
+                    continue
+                values["maturity_date"].append((maturity, block, value_block))
+            elif label == "实际发行总额" and (match := _AMOUNT_IN_TEN_THOUSANDS.fullmatch(value)):
+                amount = format((Decimal(match.group(1).replace(",", "")) / Decimal("10000")).normalize(), "f")
+                values["tranche_issue_amount"].append((amount, block, value_block))
+        if labels_seen and not all(len(candidates) == 1 for candidates in values.values()):
+            return []
+        if labels_seen:
+            records.append((page, {field_id: candidates[0] for field_id, candidates in values.items()}))
+    if len({values["security_code"][0] for _, values in records}) != len(records):
+        return []
+    facts = []
+    for page, values in records:
+        code = values["security_code"][0]
+        entity_key = f"security:{code}"
+        for field_id, (value, label_block, value_block) in values.items():
+            facts.append(
+                ExtractionFact(
+                    fact_id=f"disclosed:{field_id}:{value_block.evidence_id}",
+                    field_id=field_id,
+                    entity_key=entity_key,
+                    status=FactStatus.DISCLOSED,
+                    value=value,
+                    evidence=[
+                        _evidence(title.evidence_id, artifact_scope, document_name, 1, "公告标题", title.exact_text),
+                        _evidence(label_block.evidence_id, artifact_scope, document_name, page.physical_page, "簿记建档结果公告/证券信息表", label_block.exact_text),
+                        _evidence(value_block.evidence_id, artifact_scope, document_name, page.physical_page, "簿记建档结果公告/证券信息表", value_block.exact_text),
+                    ],
+                )
+            )
     return facts
 
 

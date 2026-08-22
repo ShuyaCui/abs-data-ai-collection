@@ -6,7 +6,12 @@ from dataclasses import asdict
 from pathlib import Path
 
 from npl_extract.intake import inspect_pdf
-from npl_extract.extract import extract_trustee_report_facts
+from npl_extract.extract import (
+    extract_issuance_announcement_facts,
+    extract_issuance_result_ocr_facts,
+    extract_rating_report_facts,
+    extract_trustee_report_facts,
+)
 from npl_extract.parsers import parse_native_pdf_isolated, parser_identity
 from npl_extract.pipeline import persist_facts, persist_page_artifacts, stage_verified_pdf
 
@@ -27,6 +32,12 @@ def main(argv: list[str] | None = None) -> int:
     trustee_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
     trustee_command.add_argument("--native-parser", choices=["pypdf", "docling", "docling-ocr"], default="pypdf")
     trustee_command.add_argument("--pages", type=_page_range)
+    extract_command = commands.add_parser("extract", help="extract deterministic facts for one supported PDF")
+    extract_command.add_argument("pdf", type=Path)
+    extract_command.add_argument("--entity-key")
+    extract_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    extract_command.add_argument("--native-parser", choices=["pypdf", "docling", "docling-ocr"], default="pypdf")
+    extract_command.add_argument("--pages", type=_page_range)
     args = parser.parse_args(argv)
     result = inspect_pdf(args.pdf)
     if args.command == "inspect" or not result.accepted:
@@ -36,8 +47,17 @@ def main(argv: list[str] | None = None) -> int:
     parser_id = parser_identity(args.native_parser)
     scope = _scope(parser_id, args.pages)
     pages = parse_native_pdf_isolated(staged_pdf, parser=args.native_parser, expected_sha256=result.document_sha256, page_range=args.pages)
-    if args.command == "extract-trustee":
-        facts = extract_trustee_report_facts(pages, args.pdf.name, args.entity_key, scope)
+    if args.command in {"extract-trustee", "extract"}:
+        if args.command == "extract-trustee":
+            facts = extract_trustee_report_facts(pages, args.pdf.name, args.entity_key, scope)
+        elif "簿记建档发行结果公告" in args.pdf.name:
+            facts = extract_issuance_result_ocr_facts(pages, args.pdf.name, scope)
+        elif args.entity_key and args.entity_key.startswith("product:") and "发行公告" in args.pdf.name:
+            facts = extract_issuance_announcement_facts(pages, args.pdf.name, args.entity_key, scope)
+        elif args.entity_key and args.entity_key.startswith("product:") and "信用评级报告" in args.pdf.name:
+            facts = extract_rating_report_facts(pages, args.pdf.name, args.entity_key, scope)
+        else:
+            facts = []
         if facts:
             persist_page_artifacts(result.document_sha256, pages, args.runs_dir, scope=scope, parser_identity=parser_id)
             persist_facts(result.document_sha256, facts, args.runs_dir)

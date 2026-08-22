@@ -6,7 +6,11 @@ from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from io import BytesIO
 from npl_extract.contracts import EvidenceRef, ExtractionFact, FactStatus
-from npl_extract.extract import extract_issuance_announcement_facts, extract_rating_report_facts
+from npl_extract.extract import (
+    extract_issuance_announcement_facts,
+    extract_issuance_result_ocr_facts,
+    extract_rating_report_facts,
+)
 from pathlib import Path
 
 import pytest
@@ -58,6 +62,168 @@ def test_extracts_product_identity_cutoff_and_issue_total_from_issuance_announce
     }
     assert all(fact.status is FactStatus.DISCLOSED for fact in facts)
     assert {fact.evidence[0].physical_page for fact in facts} == {1, 2}
+
+
+def test_extracts_security_records_from_ocr_issuance_result_tables() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block("p001:b001", 1, "臻粹 2026 年第二期不良资产支持证券簿记建档发行结果公告", [0, 0, 72, 72]),
+                Block("p001:b009", 1, "证券代码", [0, 0, 72, 72]),
+                Block("p001:b010", 1, "2689075", [0, 0, 72, 72]),
+                Block("p001:b011", 1, "预期到期日", [0, 0, 72, 72]),
+                Block("p001:b012", 1, "2028年2月23日", [0, 0, 72, 72]),
+                Block("p001:b019", 1, "实际发行总额", [0, 0, 72, 72]),
+                Block("p001:b020", 1, "13,200.00万元", [0, 0, 72, 72]),
+            ],
+            ocr_requested=True,
+        ),
+        PageContent(
+            2,
+            "",
+            [
+                Block("p002:b007", 2, "证券代码", [0, 0, 72, 72]),
+                Block("p002:b008", 2, "2689076", [0, 0, 72, 72]),
+                Block("p002:b009", 2, "预期到期日", [0, 0, 72, 72]),
+                Block("p002:b010", 2, "2029年4月23日", [0, 0, 72, 72]),
+                Block("p002:b018", 2, "实际发行总额", [0, 0, 72, 72]),
+                Block("p002:b019", 2, "5,000.00万元", [0, 0, 72, 72]),
+            ],
+            ocr_requested=True,
+        ),
+    ]
+
+    facts = extract_issuance_result_ocr_facts(
+        pages, "臻粹2026年第二期不良资产支持证券簿记建档发行结果公告.pdf", "paddleocr-page"
+    )
+
+    assert {(fact.field_id, fact.entity_key, fact.value) for fact in facts} == {
+        ("security_code", "security:2689075", "2689075"),
+        ("maturity_date", "security:2689075", "2028-02-23"),
+        ("tranche_issue_amount", "security:2689075", "1.32"),
+        ("security_code", "security:2689076", "2689076"),
+        ("maturity_date", "security:2689076", "2029-04-23"),
+        ("tranche_issue_amount", "security:2689076", "0.5"),
+    }
+    assert all(fact.status is FactStatus.DISCLOSED for fact in facts)
+    assert all(fact.evidence[0].evidence_id == "p001:b001" for fact in facts)
+
+
+def test_ocr_issuance_result_rejects_duplicate_security_codes_on_one_table() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block("p001:b001", 1, "臻粹 2026 年第二期不良资产支持证券簿记建档发行结果公告", [0, 0, 72, 72]),
+                Block("p001:b009", 1, "证券代码", [0, 0, 72, 72]),
+                Block("p001:b010", 1, "2689075", [0, 0, 72, 72]),
+                Block("p001:b011", 1, "证券代码", [0, 0, 72, 72]),
+                Block("p001:b012", 1, "2689076", [0, 0, 72, 72]),
+                Block("p001:b013", 1, "预期到期日", [0, 0, 72, 72]),
+                Block("p001:b014", 1, "2028年2月23日", [0, 0, 72, 72]),
+                Block("p001:b015", 1, "实际发行总额", [0, 0, 72, 72]),
+                Block("p001:b016", 1, "13,200.00万元", [0, 0, 72, 72]),
+            ],
+            ocr_requested=True,
+        )
+    ]
+
+    facts = extract_issuance_result_ocr_facts(
+        pages, "臻粹2026年第二期不良资产支持证券簿记建档发行结果公告.pdf", "paddleocr-page"
+    )
+
+    assert facts == []
+
+
+def test_ocr_issuance_result_requires_the_first_ocr_block_to_be_the_title() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block("p001:b000", 1, "正文引用", [0, 0, 72, 72]),
+                Block("p001:b001", 1, "臻粹 2026 年第二期不良资产支持证券簿记建档发行结果公告", [0, 0, 72, 72]),
+                Block("p001:b009", 1, "证券代码", [0, 0, 72, 72]),
+                Block("p001:b010", 1, "2689075", [0, 0, 72, 72]),
+                Block("p001:b011", 1, "预期到期日", [0, 0, 72, 72]),
+                Block("p001:b012", 1, "2028年2月23日", [0, 0, 72, 72]),
+                Block("p001:b019", 1, "实际发行总额", [0, 0, 72, 72]),
+                Block("p001:b020", 1, "13,200.00万元", [0, 0, 72, 72]),
+            ],
+            ocr_requested=True,
+        )
+    ]
+
+    facts = extract_issuance_result_ocr_facts(
+        pages, "臻粹2026年第二期不良资产支持证券簿记建档发行结果公告.pdf", "paddleocr-page"
+    )
+
+    assert facts == []
+
+
+def test_ocr_issuance_result_rejects_a_document_with_an_incomplete_tranche_page() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block("p001:b001", 1, "臻粹 2026 年第二期不良资产支持证券簿记建档发行结果公告", [0, 0, 72, 72]),
+                Block("p001:b009", 1, "证券代码", [0, 0, 72, 72]),
+                Block("p001:b010", 1, "2689075", [0, 0, 72, 72]),
+                Block("p001:b011", 1, "预期到期日", [0, 0, 72, 72]),
+                Block("p001:b012", 1, "2028年2月23日", [0, 0, 72, 72]),
+                Block("p001:b019", 1, "实际发行总额", [0, 0, 72, 72]),
+                Block("p001:b020", 1, "13,200.00万元", [0, 0, 72, 72]),
+            ],
+            ocr_requested=True,
+        ),
+        PageContent(
+            2,
+            "",
+            [
+                Block("p002:b007", 2, "证券代码", [0, 0, 72, 72]),
+                Block("p002:b008", 2, "2689076", [0, 0, 72, 72]),
+                Block("p002:b009", 2, "预期到期日", [0, 0, 72, 72]),
+                Block("p002:b010", 2, "2029年4月23日", [0, 0, 72, 72]),
+            ],
+            ocr_requested=True,
+        ),
+    ]
+
+    facts = extract_issuance_result_ocr_facts(
+        pages, "臻粹2026年第二期不良资产支持证券簿记建档发行结果公告.pdf", "paddleocr-page"
+    )
+
+    assert facts == []
+
+
+def test_ocr_issuance_result_rejects_a_trailing_unpaired_table_label() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block("p001:b001", 1, "臻粹 2026 年第二期不良资产支持证券簿记建档发行结果公告", [0, 0, 72, 72]),
+                Block("p001:b009", 1, "证券代码", [0, 0, 72, 72]),
+                Block("p001:b010", 1, "2689075", [0, 0, 72, 72]),
+                Block("p001:b011", 1, "预期到期日", [0, 0, 72, 72]),
+                Block("p001:b012", 1, "2028年2月23日", [0, 0, 72, 72]),
+                Block("p001:b019", 1, "实际发行总额", [0, 0, 72, 72]),
+                Block("p001:b020", 1, "13,200.00万元", [0, 0, 72, 72]),
+            ],
+            ocr_requested=True,
+        ),
+        PageContent(2, "", [Block("p002:b024", 2, "实际发行总额", [0, 0, 72, 72])], ocr_requested=True),
+    ]
+
+    facts = extract_issuance_result_ocr_facts(
+        pages, "臻粹2026年第二期不良资产支持证券簿记建档发行结果公告.pdf", "paddleocr-page"
+    )
+
+    assert facts == []
 
 
 def test_extracts_initial_pool_balance_from_rating_report() -> None:
