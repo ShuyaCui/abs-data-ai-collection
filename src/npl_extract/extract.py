@@ -43,7 +43,7 @@ def derive_npl_recovery_cash(
 
 
 def extract_trustee_report_facts(
-    pages: list[PageContent], document_name: str, entity_key: str
+    pages: list[PageContent], document_name: str, entity_key: str, artifact_scope: str
 ) -> list[ExtractionFact]:
     """Extract deterministic trustee-report facts from parser-owned text blocks."""
     document_text = "\n".join(block.exact_text for page in pages for block in page.blocks)
@@ -65,7 +65,7 @@ def extract_trustee_report_facts(
                     entity_key=entity_key,
                     status=FactStatus.DISCLOSED,
                     value=value,
-                    evidence=[_evidence(block.evidence_id, document_name, page.physical_page, "封面/报告日期", block.exact_text)],
+                    evidence=[_evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "封面/报告日期", block.exact_text)],
                 )
             if "资金池现金流流入" in document_text and in_progress is None and (match := _IN_PROGRESS_RECOVERY.search(block.exact_text)):
                 in_progress = RecoveryComponent(
@@ -73,6 +73,7 @@ def extract_trustee_report_facts(
                     amount_cny=match.group(1).replace(",", ""),
                     evidence=_evidence(
                         block.evidence_id,
+                        artifact_scope,
                         document_name,
                         page.physical_page,
                         "四、资产池表现情况/（三）资金池现金流流入/处置中/累计回收金额",
@@ -85,6 +86,7 @@ def extract_trustee_report_facts(
                     amount_cny=match.group(1).replace(",", ""),
                     evidence=_evidence(
                         block.evidence_id,
+                        artifact_scope,
                         document_name,
                         page.physical_page,
                         "四、资产池表现情况/（三）资金池现金流流入/本期处置完毕/累计回收金额",
@@ -117,9 +119,10 @@ def extract_trustee_report_facts(
     return facts
 
 
-def _evidence(evidence_id: str, document_name: str, physical_page: int, locator: str, exact_text: str) -> EvidenceRef:
+def _evidence(evidence_id: str, artifact_scope: str, document_name: str, physical_page: int, locator: str, exact_text: str) -> EvidenceRef:
     return EvidenceRef(
         evidence_id=evidence_id,
+        artifact_scope=artifact_scope,
         document_name=document_name,
         physical_page=physical_page,
         locator=locator,

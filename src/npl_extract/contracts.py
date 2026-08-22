@@ -26,6 +26,7 @@ class ValuePolicy(str, Enum):
 
 class EvidenceRef(BaseModel):
     evidence_id: str
+    artifact_scope: str
     document_name: str
     physical_page: int = Field(ge=1)
     locator: str

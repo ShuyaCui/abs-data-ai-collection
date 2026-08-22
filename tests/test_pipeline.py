@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
+from io import BytesIO
 from npl_extract.contracts import EvidenceRef, ExtractionFact, FactStatus
 from pathlib import Path
 
 import pytest
+from pypdf import PdfWriter
 
 from npl_extract.parsers import Block, PageContent, PageRoute, PypdfNativeParser, parse_native_pdf_isolated, route_page
 from npl_extract.pipeline import persist_facts, persist_page_artifacts, stage_verified_pdf
@@ -17,6 +19,7 @@ def test_routes_native_scan_and_complex_table_pages() -> None:
     assert route_page(PageContent(2, "", [])) is PageRoute.OCR
     assert route_page(PageContent(2, "A", [])) is PageRoute.OCR
     assert route_page(PageContent(3, "表格文字", [], has_complex_table=True)) is PageRoute.HYBRID
+    assert route_page(PageContent(4, "OCR 后的充足文本内容", [], ocr_requested=True)) is PageRoute.NATIVE
 
 
 def test_persists_idempotent_evidence_artifacts(tmp_path: Path) -> None:
@@ -40,6 +43,8 @@ def test_persists_idempotent_evidence_artifacts(tmp_path: Path) -> None:
     assert (first.run_dir / "tables.jsonl").is_file()
     diagnostics = [json.loads(line) for line in (first.run_dir / "page-quality.jsonl").read_text().splitlines()]
     assert [entry["route"] for entry in diagnostics] == ["native", "ocr"]
+    assert [entry["ocr_requested"] for entry in diagnostics] == [False, False]
+    assert [entry["route_basis"] for entry in diagnostics] == ["returned_text", "returned_text"]
 
 
 def test_staged_pdf_rejects_source_bytes_changed_after_intake(tmp_path: Path) -> None:
@@ -67,11 +72,30 @@ def test_repairs_a_run_created_by_a_different_pipeline_version(tmp_path: Path) -
     pages = [PageContent(1, "证券代码 ABC123", [])]
     first = persist_page_artifacts("c" * 64, pages, tmp_path)
     manifest_path = first.run_dir / "manifest.json"
-    manifest_path.write_text('{"document_sha256":"' + "c" * 64 + '","pipeline_version":"old"}')
+    manifest_path.write_text('{"document_sha256":"' + "c" * 64 + '","pipeline_version":"old","scope":"all"}')
 
     repaired = persist_page_artifacts("c" * 64, pages, tmp_path)
 
     assert not repaired.reused
+
+
+def test_page_scope_does_not_reuse_a_whole_document_artifact(tmp_path: Path) -> None:
+    pages = [PageContent(1, "证券代码 ABC123", [])]
+    whole = persist_page_artifacts("f" * 64, pages, tmp_path)
+    partial = persist_page_artifacts("f" * 64, pages, tmp_path, scope="docling-ocr-pages-1-1")
+
+    assert whole.run_dir != partial.run_dir
+    assert not partial.reused
+
+
+def test_parser_scope_does_not_reuse_another_engine_artifact(tmp_path: Path) -> None:
+    pages = [PageContent(1, "证券代码 ABC123", [])]
+    pypdf = persist_page_artifacts("9" * 64, pages, tmp_path, scope="parser-pages-1-1", parser_identity="pypdf-6-16-1")
+    docling = persist_page_artifacts("9" * 64, pages, tmp_path, scope="parser-pages-1-1", parser_identity="docling-2-121-0-native-no-table")
+
+    assert pypdf.run_dir == docling.run_dir
+    assert not docling.reused
+    assert json.loads((docling.run_dir / "manifest.json").read_text())["parser_identity"] == "docling-2-121-0-native-no-table"
 
 
 def test_concurrent_writers_leave_a_complete_artifact_run(tmp_path: Path) -> None:
@@ -81,7 +105,7 @@ def test_concurrent_writers_leave_a_complete_artifact_run(tmp_path: Path) -> Non
         results = list(pool.map(lambda pages: persist_page_artifacts("d" * 64, pages, tmp_path), [one_page, two_pages]))
 
     assert any(not result.reused for result in results)
-    run_dir = tmp_path / ("d" * 64)
+    run_dir = tmp_path / ("d" * 64) / "pypdf-all"
     diagnostics = (run_dir / "page-quality.jsonl").read_text().splitlines()
     blocks = (run_dir / "blocks.jsonl").read_text().splitlines()
     assert len(diagnostics) == len(blocks)
@@ -108,6 +132,23 @@ def test_isolated_native_parser_preserves_page_text(tmp_path: Path) -> None:
     assert "ABC123" in pages[0].native_text
 
 
+def test_isolated_parser_honors_page_range(tmp_path: Path) -> None:
+    source = tmp_path / "native.pdf"
+    source.write_bytes(_two_page_text_pdf())
+
+    pages = parse_native_pdf_isolated(source, page_range=(2, 2), timeout_seconds=5)
+
+    assert [page.physical_page for page in pages] == [2]
+
+
+def test_isolated_parser_rechecks_the_staged_input_hash(tmp_path: Path) -> None:
+    source = tmp_path / "native.pdf"
+    source.write_bytes(_text_pdf("Security ABC123"))
+
+    with pytest.raises(RuntimeError, match="PARSER_INPUT_CHANGED"):
+        parse_native_pdf_isolated(source, expected_sha256="0" * 64, timeout_seconds=5)
+
+
 def test_docling_parser_keeps_bbox_for_a_native_page(tmp_path: Path) -> None:
     pytest.importorskip("docling")
     source = tmp_path / "native.pdf"
@@ -119,6 +160,16 @@ def test_docling_parser_keeps_bbox_for_a_native_page(tmp_path: Path) -> None:
     assert pages[0].blocks[0].bbox is not None
     assert pages[0].page_width == 72
     assert pages[0].page_height == 72
+
+
+def test_docling_ocr_option_reaches_the_worker(tmp_path: Path) -> None:
+    source = tmp_path / "native.pdf"
+    source.write_bytes(_text_pdf("Security ABC123"))
+
+    pages = parse_native_pdf_isolated(source, parser="docling-ocr", timeout_seconds=30)
+
+    assert pages[0].blocks[0].bbox is not None
+    assert pages[0].ocr_requested
 
 
 def test_parser_worker_error_is_clear(tmp_path: Path) -> None:
@@ -136,7 +187,7 @@ def test_persisted_facts_refuse_a_conflicting_retry(tmp_path: Path) -> None:
         entity_key="report:test",
         status=FactStatus.DISCLOSED,
         value="2026-08-17",
-        evidence=[EvidenceRef(evidence_id="p001:b001", document_name="报告.pdf", physical_page=1, locator="报告日期", exact_text="2026年8月17日")],
+        evidence=[EvidenceRef(evidence_id="p001:b001", artifact_scope="pypdf-all", document_name="报告.pdf", physical_page=1, locator="报告日期", exact_text="2026年8月17日")],
     )
     first = persist_facts("e" * 64, [fact], tmp_path)
     second = persist_facts("e" * 64, [fact], tmp_path)
@@ -167,3 +218,12 @@ def _text_pdf(text: str) -> bytes:
     body.extend(b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets[1:]))
     body.extend(f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
     return bytes(body)
+
+
+def _two_page_text_pdf() -> bytes:
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.add_blank_page(width=72, height=72)
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()

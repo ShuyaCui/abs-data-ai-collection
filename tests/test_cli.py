@@ -36,4 +36,4 @@ def test_parse_command_writes_evidence_artifacts(tmp_path: Path) -> None:
     exit_code = main(["parse", str(source), "--runs-dir", str(tmp_path / "runs")])
 
     assert exit_code == 0
-    assert list((tmp_path / "runs").glob("*/manifest.json"))
+    assert list((tmp_path / "runs").glob("*/pypdf-6-16-1-all/manifest.json"))

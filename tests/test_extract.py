@@ -11,6 +11,7 @@ def component(fact_id: str, amount: str, row: str) -> RecoveryComponent:
         amount_cny=amount,
         evidence=EvidenceRef(
             evidence_id=f"sha256:p007:{fact_id}",
+            artifact_scope="pypdf-all",
             document_name="受托机构报告2026年度第4期总第4期.pdf",
             physical_page=7,
             locator=f"四、资产池表现情况（三）资金池现金流流入/{row}/累计回收金额",
@@ -47,11 +48,12 @@ def test_extracts_trustee_report_date_and_recovery_with_evidence() -> None:
         ),
     ]
 
-    facts = extract_trustee_report_facts(pages, "第4期受托报告.pdf", "report:2026-08-17")
+    facts = extract_trustee_report_facts(pages, "第4期受托报告.pdf", "report:2026-08-17", "pypdf-all")
 
     assert facts[0].field_id == "latest_report_date"
     assert facts[0].value == "2026-08-17"
     assert facts[0].evidence[0].evidence_id == "p001:b012"
+    assert facts[0].evidence[0].artifact_scope == "pypdf-all"
     assert [fact.field_id for fact in facts[1:]] == [
         "npl_recovery_in_progress_cumulative",
         "npl_recovery_completed_cumulative",
@@ -64,5 +66,5 @@ def test_extracts_trustee_report_date_and_recovery_with_evidence() -> None:
 def test_refuses_a_non_trustee_document_and_invalid_date() -> None:
     pages = [PageContent(1, "", [Block("p001:b001", 1, "报告日期：2026 年 2 月 30 日", None)])]
 
-    assert extract_trustee_report_facts(pages, "发行说明书.pdf", "report:test") == []
-    assert extract_trustee_report_facts(pages, "受托机构报告.pdf", "report:test") == []
+    assert extract_trustee_report_facts(pages, "发行说明书.pdf", "report:test", "pypdf-all") == []
+    assert extract_trustee_report_facts(pages, "受托机构报告.pdf", "report:test", "pypdf-all") == []

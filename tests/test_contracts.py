@@ -17,6 +17,7 @@ from npl_extract.contracts import (
 def evidence() -> EvidenceRef:
     return EvidenceRef(
         evidence_id="sha256:p001:b001",
+        artifact_scope="pypdf-all",
         document_name="发行说明书.pdf",
         physical_page=1,
         locator="第一段",

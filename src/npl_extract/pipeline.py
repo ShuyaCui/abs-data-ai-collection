@@ -14,7 +14,7 @@ from npl_extract.parsers import PageContent, route_page
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_FILES = ("manifest.json", "page-quality.jsonl", "blocks.jsonl", "tables.jsonl")
-_PIPELINE_VERSION = "v2"
+_PIPELINE_VERSION = "v3"
 
 
 @dataclass(frozen=True)
@@ -29,13 +29,17 @@ class PersistedFacts:
     reused: bool
 
 
-def persist_page_artifacts(document_sha256: str, pages: list[PageContent], output_root: Path) -> PersistedArtifacts:
+def persist_page_artifacts(
+    document_sha256: str, pages: list[PageContent], output_root: Path, *, scope: str = "pypdf-all", parser_identity: str = "pypdf-unknown"
+) -> PersistedArtifacts:
     """Persist parser-owned page facts once for a content hash."""
     if not _SHA256.fullmatch(document_sha256):
         raise ValueError("document_sha256 must be a lowercase SHA-256 digest")
-    run_dir = output_root / document_sha256
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", scope):
+        raise ValueError("scope must contain only lowercase parser and page-range segments")
+    run_dir = output_root / document_sha256 / scope
     with _document_lock(output_root, document_sha256):
-        if _is_complete(run_dir, document_sha256):
+        if _is_complete(run_dir, document_sha256, scope, parser_identity):
             return PersistedArtifacts(run_dir, reused=True)
         run_dir.mkdir(parents=True, exist_ok=True)
         diagnostics = []
@@ -56,6 +60,8 @@ def persist_page_artifacts(document_sha256: str, pages: list[PageContent], outpu
                     "bbox_coordinate_system": "pdf_points_top_left" if page.page_width is not None else None,
                     "page_width": page.page_width,
                     "page_height": page.page_height,
+                    "ocr_requested": page.ocr_requested,
+                    "route_basis": "returned_text",
                     "route": route.value,
                 }
             )
@@ -63,7 +69,7 @@ def persist_page_artifacts(document_sha256: str, pages: list[PageContent], outpu
         _atomic_write(run_dir / "page-quality.jsonl", "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in diagnostics))
         _atomic_write(run_dir / "blocks.jsonl", "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in blocks))
         _atomic_write(run_dir / "tables.jsonl", "")
-        _atomic_write(run_dir / "manifest.json", json.dumps({"document_sha256": document_sha256, "pipeline_version": _PIPELINE_VERSION}, ensure_ascii=False))
+        _atomic_write(run_dir / "manifest.json", json.dumps({"document_sha256": document_sha256, "pipeline_version": _PIPELINE_VERSION, "scope": scope, "parser_identity": parser_identity}, ensure_ascii=False))
         return PersistedArtifacts(run_dir, reused=False)
 
 
@@ -114,7 +120,10 @@ def _atomic_write_bytes(path: Path, content: bytes) -> None:
 
 @contextmanager
 def _document_lock(output_root: Path, document_sha256: str):
-    import fcntl
+    try:
+        import fcntl
+    except ImportError as error:
+        raise RuntimeError("PARSER_PLATFORM_UNSUPPORTED: POSIX file locking is required") from error
 
     output_root.mkdir(parents=True, exist_ok=True)
     with (output_root / f".{document_sha256}.lock").open("w") as lock:
@@ -125,11 +134,11 @@ def _document_lock(output_root: Path, document_sha256: str):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def _is_complete(run_dir: Path, document_sha256: str) -> bool:
+def _is_complete(run_dir: Path, document_sha256: str, scope: str, parser_identity: str) -> bool:
     if not run_dir.is_dir() or not all((run_dir / name).is_file() for name in _ARTIFACT_FILES):
         return False
     try:
         manifest = json.loads((run_dir / "manifest.json").read_text())
     except json.JSONDecodeError:
         return False
-    return manifest == {"document_sha256": document_sha256, "pipeline_version": _PIPELINE_VERSION}
+    return manifest == {"document_sha256": document_sha256, "pipeline_version": _PIPELINE_VERSION, "scope": scope, "parser_identity": parser_identity}

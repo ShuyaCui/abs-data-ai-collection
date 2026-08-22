@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from importlib.metadata import PackageNotFoundError, version
 import json
 from pathlib import Path
 import subprocess
@@ -36,6 +37,7 @@ class PageContent:
     has_complex_table: bool = False
     page_width: float | None = None
     page_height: float | None = None
+    ocr_requested: bool = False
 
 
 def route_page(page: PageContent) -> PageRoute:
@@ -47,10 +49,12 @@ def route_page(page: PageContent) -> PageRoute:
 class PypdfNativeParser:
     """Dependency-light native-text fallback; layout geometry remains unavailable."""
 
-    def parse(self, path: Path) -> list[PageContent]:
+    def parse(self, path: Path, page_range: tuple[int, int] | None = None) -> list[PageContent]:
         reader = PdfReader(path)
         pages = []
-        for page_number, page in enumerate(reader.pages, start=1):
+        start, end = page_range or (1, len(reader.pages))
+        for page_number in range(start, min(end, len(reader.pages)) + 1):
+            page = reader.pages[page_number - 1]
             text = page.extract_text() or ""
             blocks = [
                 Block(
@@ -66,9 +70,12 @@ class PypdfNativeParser:
 
 
 class DoclingNativeParser:
-    """Local native-text parser with layout coordinates; OCR and table rebuild stay disabled."""
+    """Local Docling parser with layout coordinates and explicit OCR control."""
 
-    def parse(self, path: Path) -> list[PageContent]:
+    def __init__(self, *, ocr: bool = False) -> None:
+        self.ocr = ocr
+
+    def parse(self, path: Path, page_range: tuple[int, int] | None = None) -> list[PageContent]:
         try:
             from docling.datamodel.base_models import InputFormat
             from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -79,11 +86,11 @@ class DoclingNativeParser:
         converter = DocumentConverter(
             format_options={
                 InputFormat.PDF: PdfFormatOption(
-                    pipeline_options=PdfPipelineOptions(do_ocr=False, do_table_structure=False)
+                    pipeline_options=PdfPipelineOptions(do_ocr=self.ocr, do_table_structure=False)
                 )
             }
         )
-        document = converter.convert(path).document
+        document = converter.convert(path, page_range=page_range or (1, sys.maxsize)).document
         per_page: dict[int, list[Block]] = {page_number: [] for page_number in document.pages}
         for item in document.texts:
             for provenance in item.prov:
@@ -101,22 +108,33 @@ class DoclingNativeParser:
                 for index, block in enumerate(blocks, start=1)
             ]
             size = document.pages[page_number].size
-            pages.append(PageContent(page_number, "\n".join(block.exact_text for block in numbered_blocks), numbered_blocks, page_width=size.width, page_height=size.height))
+            pages.append(PageContent(page_number, "\n".join(block.exact_text for block in numbered_blocks), numbered_blocks, page_width=size.width, page_height=size.height, ocr_requested=self.ocr))
         return pages
 
 
-def parse_native_pdf_isolated(path: Path, *, parser: str = "pypdf", timeout_seconds: int = 120) -> list[PageContent]:
+def parse_native_pdf_isolated(
+    path: Path, *, parser: str = "pypdf", expected_sha256: str | None = None, page_range: tuple[int, int] | None = None, timeout_seconds: int = 120
+) -> list[PageContent]:
     """Run the fallback parser with bounded output and a hard wall-clock limit."""
     with tempfile.NamedTemporaryFile(mode="w+b") as output:
-        completed = subprocess.run(
-            [sys.executable, "-m", "npl_extract.parser_worker", "--parser", parser, str(path)],
-            stdout=output,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout_seconds,
-        )
+        command = [sys.executable, "-m", "npl_extract.parser_worker", "--parser", parser]
+        if expected_sha256:
+            command.extend(["--expected-sha256", expected_sha256])
+        if page_range:
+            command.extend(["--page-start", str(page_range[0]), "--page-end", str(page_range[1])])
+        command.append(str(path))
+        try:
+            completed = subprocess.run(command, stdout=output, stderr=subprocess.DEVNULL, timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError("PARSER_TIMEOUT: parser worker exceeded its time limit") from error
         output.seek(0)
         payload = output.read().decode() or "{}"
-    response = json.loads(payload)
+    if completed.returncode and not payload.startswith("{"):
+        raise RuntimeError("PARSER_FAILED: parser worker exited unexpectedly")
+    try:
+        response = json.loads(payload)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("PARSER_OUTPUT_INVALID: parser worker returned invalid JSON") from error
     if isinstance(response, dict) and "error" in response:
         error = response["error"]
         raise RuntimeError(f"{error['code']}: {error['message']}")
@@ -130,6 +148,19 @@ def parse_native_pdf_isolated(path: Path, *, parser: str = "pypdf", timeout_seco
             has_complex_table=item["has_complex_table"],
             page_width=item.get("page_width"),
             page_height=item.get("page_height"),
+            ocr_requested=item.get("ocr_requested", False),
         )
         for item in response
     ]
+
+
+def parser_identity(parser: str) -> str:
+    try:
+        if parser == "pypdf":
+            return f"pypdf-{version('pypdf').replace('.', '-')}"
+        identity = f"docling-{version('docling').replace('.', '-')}"
+        if parser == "docling-ocr":
+            identity += f"-rapidocr-{version('rapidocr').replace('.', '-')}"
+        return identity + ("-ocr-no-table" if parser == "docling-ocr" else "-native-no-table")
+    except PackageNotFoundError:
+        return f"{parser}-missing"
