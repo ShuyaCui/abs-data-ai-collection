@@ -360,3 +360,70 @@ def test_refuses_a_single_rating_under_a_two_agency_prospectus_header() -> None:
         )
         == []
     )
+
+
+def test_extracts_post_payment_tranche_balances_with_effective_date() -> None:
+    pages = [
+        PageContent(1, "", [Block("p001:b012", 1, "报告日期：2026 年 8 月 17 日", None)]),
+        PageContent(5, "", [Block("p005:b010", 5, "本期支付日 2026 年8 月24 日", None)]),
+        PageContent(
+            6,
+            "",
+            [
+                Block("p006:b004", 6, "（二）资产支持证券本息兑付情况：", None),
+                Block("p006:b006", 6, "证券代码 2689075 2689076", None),
+                Block("p006:b013", 6, "本息兑付后剩余本金值 83,978,400.00 50,000,000.00", None),
+            ],
+        ),
+    ]
+
+    facts = extract_trustee_report_facts(pages, "第4期受托机构报告.pdf", "report:2026-08-17", "pypdf-pages-1-6")
+
+    balances = [fact for fact in facts if fact.field_id == "tranche_current_balance"]
+    assert {(fact.entity_key, fact.value) for fact in balances} == {
+        ("security:2689075", "0.839784"),
+        ("security:2689076", "0.5"),
+    }
+    assert {fact.effective_at.isoformat() for fact in balances} == {"2026-08-24"}
+    assert all({item.evidence_id for item in fact.evidence} >= {"p001:b012", "p005:b010", "p006:b006", "p006:b013"} for fact in balances)
+
+
+def test_refuses_balances_when_a_second_payout_section_is_incomplete() -> None:
+    pages = [
+        PageContent(1, "", [Block("p001:b012", 1, "报告日期：2026 年 8 月 17 日", None)]),
+        PageContent(5, "", [Block("p005:b010", 5, "本期支付日 2026 年8 月24 日", None)]),
+        PageContent(
+            6,
+            "",
+            [
+                Block("p006:b004", 6, "（二）资产支持证券本息兑付情况：", None),
+                Block("p006:b006", 6, "证券代码 2689075 2689076", None),
+                Block("p006:b013", 6, "本息兑付后剩余本金值 83,978,400.00 50,000,000.00", None),
+            ],
+        ),
+        PageContent(7, "", [Block("p007:b004", 7, "（二）资产支持证券本息兑付情况：", None)]),
+    ]
+
+    facts = extract_trustee_report_facts(pages, "第4期受托机构报告.pdf", "report:2026-08-17", "pypdf-pages-1-7")
+
+    assert not [fact for fact in facts if fact.field_id == "tranche_current_balance"]
+
+
+def test_refuses_balances_when_the_two_codes_are_not_distinct() -> None:
+    pages = [
+        PageContent(1, "", [Block("p001:b012", 1, "报告日期：2026 年 8 月 17 日", None)]),
+        PageContent(5, "", [Block("p005:b010", 5, "本期支付日 2026 年8 月24 日", None)]),
+        PageContent(
+            6,
+            "",
+            [
+                Block("p006:b004", 6, "（二）资产支持证券本息兑付情况：", None),
+                Block("p006:b006", 6, "证券代码 2689075 2689075", None),
+                Block("p006:b013", 6, "本息兑付后剩余本金值 83,978,400.00 50,000,000.00", None),
+            ],
+        ),
+    ]
+
+    facts = extract_trustee_report_facts(pages, "第4期受托机构报告.pdf", "report:2026-08-17", "pypdf-pages-1-6")
+
+    assert not [fact for fact in facts if fact.field_id == "tranche_current_balance"]

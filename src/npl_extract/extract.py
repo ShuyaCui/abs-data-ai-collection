@@ -18,6 +18,9 @@ class RecoveryComponent:
 
 
 _REPORT_DATE = re.compile(r"报告日期\s*[：:]\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
+_PAYMENT_DATE = re.compile(r"本期支付日\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
+_TRANCHE_CODES = re.compile(r"^证券代码\s+(\d{7})\s+(\d{7})$")
+_POST_PAYMENT_PRINCIPAL = re.compile(r"^本息兑付后剩余本金值\s+([\d,]+(?:\.\d+)?)\s+([\d,]+(?:\.\d+)?)$")
 _IN_PROGRESS_RECOVERY = re.compile(r"^处置中\s+[\d,]+\.\d+\s+([\d,]+\.\d+)")
 _COMPLETED_RECOVERY = re.compile(r"^本期处置完毕\s+[\d,]+\.\d+\s+([\d,]+\.\d+)")
 _INITIAL_CUTOFF = re.compile(r"初始起算日\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
@@ -126,7 +129,61 @@ def extract_trustee_report_facts(
             ]
         )
         facts.append(derive_npl_recovery_cash(entity_key=entity_key, in_progress=in_progress, completed=completed))
+    facts.extend(_extract_tranche_current_balances(pages, document_name, artifact_scope, report_date))
     return facts
+
+
+def _extract_tranche_current_balances(
+    pages: list[PageContent], document_name: str, artifact_scope: str, report_date: ExtractionFact | None
+) -> list[ExtractionFact]:
+    if report_date is None:
+        return []
+    payment_dates = []
+    headings = []
+    codes = []
+    balances = []
+    for page in pages:
+        for block in page.blocks:
+            if match := _PAYMENT_DATE.search(block.exact_text):
+                try:
+                    payment_dates.append((page, block, date(int(match.group(1)), int(match.group(2)), int(match.group(3)))))
+                except ValueError:
+                    continue
+        headings.extend((page, index, block) for index, block in enumerate(page.blocks) if "资产支持证券本息兑付情况" in block.exact_text)
+        codes.extend((page, index, block, match) for index, block in enumerate(page.blocks) if (match := _TRANCHE_CODES.match(block.exact_text)))
+        balances.extend((page, index, block, match) for index, block in enumerate(page.blocks) if (match := _POST_PAYMENT_PRINCIPAL.match(block.exact_text)))
+    if not (len(payment_dates) == len(headings) == len(codes) == len(balances) == 1):
+        return []
+    payment_page, payment_block, effective_at = payment_dates[0]
+    page, heading_index, heading = headings[0]
+    code_page, code_index, code_block, code_match = codes[0]
+    balance_page, balance_index, balance_block, balance_match = balances[0]
+    if (
+        page.physical_page != code_page.physical_page
+        or page.physical_page != balance_page.physical_page
+        or not heading_index < code_index < balance_index
+        or len(set(code_match.groups())) != 2
+    ):
+        return []
+    evidence = [
+        report_date.evidence[0],
+        _evidence(payment_block.evidence_id, artifact_scope, document_name, payment_page.physical_page, "本期支付日", payment_block.exact_text),
+        _evidence(heading.evidence_id, artifact_scope, document_name, page.physical_page, "三、资产支持证券概况/资产支持证券本息兑付情况", heading.exact_text),
+        _evidence(code_block.evidence_id, artifact_scope, document_name, page.physical_page, "资产支持证券本息兑付情况/证券代码", code_block.exact_text),
+        _evidence(balance_block.evidence_id, artifact_scope, document_name, page.physical_page, "资产支持证券本息兑付情况/本息兑付后剩余本金值", balance_block.exact_text),
+    ]
+    return [
+        ExtractionFact(
+            fact_id=f"disclosed:tranche-current-balance:{code}:{balance_block.evidence_id}",
+            field_id="tranche_current_balance",
+            entity_key=f"security:{code}",
+            status=FactStatus.DISCLOSED,
+            value=format((Decimal(balance.replace(",", "")) / Decimal("100000000")).normalize(), "f"),
+            effective_at=effective_at,
+            evidence=evidence,
+        )
+        for code, balance in zip(code_match.groups(), balance_match.groups(), strict=True)
+    ]
 
 
 def extract_issuance_announcement_facts(
