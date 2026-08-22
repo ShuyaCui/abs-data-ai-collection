@@ -6,7 +6,7 @@ This is a development coverage matrix, not a frozen gold set. “CLI verified”
 |---:|---|---|---|
 | 1 | `security_code` | CLI verified | OCR issuance-result announcement, `2689075` / `2689076` |
 | 2 | `asset_full_name` | CLI verified | native issuance announcement, page-1 title |
-| 3 | `issue_rating` | pending | needs product-to-security association plus rating-report security disposition |
+| 3 | `issue_rating` | CLI verified | native prospectus p2 two-agency table, projected through explicit OCR tranche associations; rating reports remain higher-precedence when safely available |
 | 6 | `initial_cutoff_date` | CLI verified | native issuance announcement, page 2 |
 | 7 | `maturity_date` | CLI verified | OCR issuance-result announcement, tranche tables |
 | 12 | `tranche_issue_amount` | CLI verified | OCR issuance-result announcement, actual issuance amounts |
@@ -19,9 +19,9 @@ This is a development coverage matrix, not a frozen gold set. “CLI verified”
 
 ## Current score
 
-- CLI verified: 8/12.
+- CLI verified: 9/12.
 - Function-level only: 1/12.
-- Pending: 3/12.
+- Pending: 2/12.
 - Secure product rating-report route: blocked only by a policy decision on quarantined `/URI` links; no action is executed and no bypass exists.
 
 ## Next non-model work

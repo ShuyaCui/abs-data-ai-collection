@@ -67,7 +67,7 @@ class ExtractionFact(BaseModel):
     field_id: str
     entity_key: str
     status: FactStatus
-    value: str | None = None
+    value: str | list[str] | None = None
     evidence: list[EvidenceRef] = Field(default_factory=list)
     effective_at: date | None = None
     rule_version: str | None = None
@@ -81,6 +81,12 @@ class ExtractionFact(BaseModel):
             raise ValueError("unknown field")
         if self.status not in contract.allowed_statuses:
             raise ValueError(f"field {self.field_id} does not allow status {self.status.value}")
+        if contract.value_type == "string[]" and self.value is not None and (
+            not isinstance(self.value, list) or not self.value or not all(isinstance(item, str) and item for item in self.value)
+        ):
+            raise ValueError("string[] facts require a non-empty string array")
+        if contract.value_type != "string[]" and isinstance(self.value, list):
+            raise ValueError("only string[] fields may carry an array value")
         if self.status is FactStatus.DISCLOSED and (self.value is None or not self.evidence):
             raise ValueError("disclosed facts require a value and evidence")
         if self.status is FactStatus.DERIVED:

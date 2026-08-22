@@ -106,6 +106,19 @@ def test_rejects_tranche_fact_without_security_key() -> None:
         )
 
 
+def test_preserves_a_contractual_string_array_value() -> None:
+    fact = ExtractionFact(
+        fact_id="rating-array",
+        field_id="issue_rating",
+        entity_key="security:123",
+        status=FactStatus.DISCLOSED,
+        value=["中债资信:AAAsf", "中诚信国际:AAAsf"],
+        evidence=[evidence()],
+    )
+
+    assert fact.value == ["中债资信:AAAsf", "中诚信国际:AAAsf"]
+
+
 @pytest.mark.parametrize(
     ("field_id", "entity_key", "message"),
     [

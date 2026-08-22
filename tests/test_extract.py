@@ -4,6 +4,7 @@ from npl_extract.contracts import EvidenceRef, ExtractionFact, FactStatus
 from npl_extract.extract import (
     RecoveryComponent,
     extract_issuance_result_ocr_facts,
+    extract_prospectus_issue_rating_facts,
     extract_prospectus_first_interest_payment_facts,
     extract_trustee_report_facts,
     derive_npl_recovery_cash,
@@ -267,6 +268,95 @@ def test_refuses_two_tranche_levels_for_one_security() -> None:
     assert (
         extract_prospectus_first_interest_payment_facts(
             pages, "臻粹2026年第二期不良资产支持证券发行说明书.pdf", associations, "pypdf-pages-2-2"
+        )
+        == []
+    )
+
+
+def test_projects_prospectus_issue_ratings_to_unique_tranche_associations() -> None:
+    associations = [
+        ExtractionFact(
+            fact_id=f"level-{level}",
+            field_id="tranche_level",
+            entity_key=entity_key,
+            status=FactStatus.DISCLOSED,
+            value=level,
+            evidence=[
+                EvidenceRef(
+                    evidence_id=f"p001:{index}",
+                    artifact_scope="docling-ocr-all",
+                    document_name="臻粹2026年第二期不良资产支持证券簿记建档发行结果公告.pdf",
+                    physical_page=index,
+                    locator="证券名称",
+                    exact_text=level,
+                )
+            ],
+        )
+        for index, (level, entity_key) in enumerate(
+            (("优先档", "security:2689075"), ("次级档", "security:2689076")), start=1
+        )
+    ]
+    pages = [
+        PageContent(
+            2,
+            "",
+            [
+                Block("p002:b011", 2, "方式 利率类型 预期到期日 法定到期日 评级", None),
+                Block("p002:b012", 2, "（中债资信/中诚信）", None),
+                Block("p002:b013", 2, "优先档 13,200.00 72.53% 过手 固定利率 2028/2/23 2032/4/23 AAAsf/AAAsf", None),
+                Block("p002:b014", 2, "次级档 5,000.00 27.47% 过手 无票面利率 2029/4/23 2032/4/23 无评级", None),
+            ],
+        )
+    ]
+
+    facts = extract_prospectus_issue_rating_facts(
+        pages,
+        "臻粹2026年第二期不良资产支持证券发行说明书.pdf",
+        associations,
+        "pypdf-pages-2-2",
+    )
+
+    assert {(fact.entity_key, tuple(fact.value)) for fact in facts} == {
+        ("security:2689075", ("中债资信:AAAsf", "中诚信国际:AAAsf")),
+        ("security:2689076", ("中债资信:无评级", "中诚信国际:无评级")),
+    }
+    assert all(fact.field_id == "issue_rating" for fact in facts)
+    assert all(fact.evidence[0].locator == "发行要素/评级（中债资信/中诚信）" for fact in facts)
+
+
+def test_refuses_a_single_rating_under_a_two_agency_prospectus_header() -> None:
+    association = ExtractionFact(
+        fact_id="senior-level",
+        field_id="tranche_level",
+        entity_key="security:2689075",
+        status=FactStatus.DISCLOSED,
+        value="优先档",
+        evidence=[
+            EvidenceRef(
+                evidence_id="p001:b005",
+                artifact_scope="docling-ocr-all",
+                document_name="臻粹2026年第二期不良资产支持证券簿记建档发行结果公告.pdf",
+                physical_page=1,
+                locator="证券名称",
+                exact_text="优先档",
+            )
+        ],
+    )
+    pages = [
+        PageContent(
+            2,
+            "",
+            [
+                Block("p002:b011", 2, "方式 利率类型 预期到期日 法定到期日 评级", None),
+                Block("p002:b012", 2, "（中债资信/中诚信）", None),
+                Block("p002:b013", 2, "优先档 13,200.00 72.53% 过手 固定利率 2028/2/23 2032/4/23 AAAsf", None),
+            ],
+        )
+    ]
+
+    assert (
+        extract_prospectus_issue_rating_facts(
+            pages, "臻粹2026年第二期不良资产支持证券发行说明书.pdf", [association], "pypdf-pages-2-2"
         )
         == []
     )

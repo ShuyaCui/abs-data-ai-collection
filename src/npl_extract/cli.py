@@ -11,6 +11,7 @@ from npl_extract.extract import (
     extract_issuance_announcement_facts,
     extract_issuance_result_ocr_facts,
     extract_prospectus_first_interest_payment_facts,
+    extract_prospectus_issue_rating_facts,
     extract_rating_report_facts,
     extract_trustee_report_facts,
 )
@@ -84,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(_json({"error": str(error)}))
                 return 2
             facts = extract_prospectus_first_interest_payment_facts(pages, args.pdf.name, association_facts, scope)
+            facts.extend(extract_prospectus_issue_rating_facts(pages, args.pdf.name, association_facts, scope))
         else:
             facts = []
         if facts:

@@ -121,3 +121,34 @@ def test_rejects_duplicate_exportable_values_for_one_entity_field(tmp_path) -> N
 
     with pytest.raises(ValueError, match="ambiguous export value"):
         export_facts(template, facts, tmp_path / "export.xlsx")
+
+
+def test_exports_a_string_array_as_canonical_json_text(tmp_path) -> None:
+    template = tmp_path / "template.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"] = "债项评级"
+    workbook.save(template)
+    fact = ExtractionFact(
+        fact_id="ratings",
+        field_id="issue_rating",
+        entity_key="security:2689075",
+        status=FactStatus.DISCLOSED,
+        value=["中债资信:AAAsf", "中诚信国际:AAAsf"],
+        evidence=[
+            EvidenceRef(
+                evidence_id="p002:b013",
+                artifact_scope="pypdf-pages-2-2",
+                document_name="发行说明书.pdf",
+                physical_page=2,
+                locator="发行要素/评级",
+                exact_text="AAAsf/AAAsf",
+            )
+        ],
+    )
+    output = tmp_path / "export.xlsx"
+
+    export_facts(template, [fact], output)
+
+    workbook = load_workbook(output, data_only=False)
+    assert workbook["security_2689075"]["B1"].value == '["中债资信:AAAsf","中诚信国际:AAAsf"]'
+    assert list(workbook["证据"].values)[1][3] == '["中债资信:AAAsf","中诚信国际:AAAsf"]'

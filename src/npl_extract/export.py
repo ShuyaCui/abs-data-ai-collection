@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import json
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -32,7 +33,7 @@ def export_facts(template: Path, facts: list[ExtractionFact], output: Path) -> N
                 continue
             if sum(item.field_id == fact.field_id for item in entity_facts) != 1:
                 raise ValueError(f"ambiguous export value for {entity_key}/{fact.field_id}")
-            cell = sheet.cell(row, 2, fact.value)
+            cell = sheet.cell(row, 2, _export_value(fact.value))
             cell.number_format = "@"
             cell.font = Font(color="0000FF")
     if not grouped:
@@ -48,7 +49,7 @@ def export_facts(template: Path, facts: list[ExtractionFact], output: Path) -> N
                     fact.entity_key,
                     fact.field_id,
                     fact.status.value,
-                    fact.value,
+                    _export_value(fact.value),
                     evidence.document_name,
                     evidence.physical_page,
                     evidence.locator,
@@ -69,3 +70,7 @@ def _sheet_name(entity_key: str, used_names: set[str]) -> str:
         name = f"{base[: 31 - len(str(suffix)) - 1]}_{suffix}"
     used_names.add(name)
     return name
+
+
+def _export_value(value: str | list[str] | None) -> str | None:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")) if isinstance(value, list) else value

@@ -169,7 +169,16 @@ def test_extract_command_projects_prospectus_payment_date_through_association_fa
     monkeypatch.setattr(
         "npl_extract.cli.parse_native_pdf_isolated",
         lambda *args, **kwargs: [
-            PageContent(2, "", [Block("p002:b028", 2, "资产支持证券的第一个支付日是 2026 年 5 月 23 日", None)])
+            PageContent(
+                2,
+                "",
+                [
+                    Block("p002:b028", 2, "资产支持证券的第一个支付日是 2026 年 5 月 23 日", None),
+                    Block("p002:b011", 2, "方式 利率类型 预期到期日 法定到期日 评级", None),
+                    Block("p002:b012", 2, "（中债资信/中诚信）", None),
+                    Block("p002:b013", 2, "优先档 13,200.00 72.53% 过手 固定利率 2028/2/23 2032/4/23 AAAsf/AAAsf", None),
+                ],
+            )
         ],
     )
 
@@ -188,8 +197,8 @@ def test_extract_command_projects_prospectus_payment_date_through_association_fa
 
     output = json.loads(capsys.readouterr().out)
     assert exit_code == 0
-    assert output[0]["field_id"] == "first_interest_payment_date"
-    assert output[0]["entity_key"] == "security:2689075"
+    assert {fact["field_id"] for fact in output} == {"first_interest_payment_date", "issue_rating"}
+    assert {fact["entity_key"] for fact in output} == {"security:2689075"}
 
 
 def test_extract_trustee_command_rejects_a_product_key_for_report_facts(tmp_path: Path, capsys, monkeypatch) -> None:

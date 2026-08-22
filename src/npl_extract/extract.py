@@ -28,6 +28,7 @@ _SECURITY_CODE = re.compile(r"^\d{7}$")
 _EXPECTED_MATURITY = re.compile(r"^(\d{4})年(\d{1,2})月(\d{1,2})日$")
 _AMOUNT_IN_TEN_THOUSANDS = re.compile(r"^([\d,]+(?:\.\d+)?)万元$")
 _FIRST_INTEREST_PAYMENT = re.compile(r"资产支持证券的第一个支付日是\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
+_PROSPECTUS_RATING_ROW = re.compile(r"^(优先档|次级档)\s+.+\s+(无评级|[A-Za-z][A-Za-z0-9+.-]*(?:/[A-Za-z][A-Za-z0-9+.-]*)?)\s*$")
 
 
 def derive_npl_recovery_cash(
@@ -304,29 +305,9 @@ def extract_prospectus_first_interest_payment_facts(
 ) -> list[ExtractionFact]:
     """Project a uniquely disclosed first payment date through explicit tranche associations."""
     product_name = _product_name(document_name, "发行说明书")
-    if not product_name:
+    associations = _resolve_tranche_associations(association_facts, product_name)
+    if not associations:
         return []
-    associations: dict[str, ExtractionFact] = {}
-    associated_entities = set()
-    for fact in association_facts:
-        if fact.field_id != "tranche_level":
-            continue
-        source_products = {
-            _product_name(item.document_name, "簿记建档发行结果公告")
-            for item in fact.evidence
-            if item.document_name.endswith("簿记建档发行结果公告.pdf")
-        }
-        if (
-            fact.status is not FactStatus.DISCLOSED
-            or fact.value not in {"优先档", "次级档"}
-            or not fact.entity_key.startswith("security:")
-            or source_products != {product_name}
-            or fact.value in associations
-            or fact.entity_key in associated_entities
-        ):
-            return []
-        associations[fact.value] = fact
-        associated_entities.add(fact.entity_key)
     candidates = []
     for page in pages:
         if page.ocr_requested:
@@ -351,6 +332,65 @@ def extract_prospectus_first_interest_payment_facts(
                 value=value,
                 evidence=[
                     _evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "发行要素/第一个支付日", block.exact_text),
+                    *association.evidence,
+                ],
+            )
+        )
+    return facts
+
+
+def extract_prospectus_issue_rating_facts(
+    pages: list[PageContent], document_name: str, association_facts: list[ExtractionFact], artifact_scope: str
+) -> list[ExtractionFact]:
+    """Project prospectus ratings through explicit, one-to-one tranche associations."""
+    associations = _resolve_tranche_associations(association_facts, _product_name(document_name, "发行说明书"))
+    if not associations:
+        return []
+    headers = []
+    for page in pages:
+        if page.ocr_requested:
+            continue
+        for index, block in enumerate(page.blocks):
+            if "评级" not in re.sub(r"\s+", "", block.exact_text):
+                continue
+            nearby = page.blocks[index + 1 : index + 3]
+            agency_block = next((item for item in nearby if "中债资信/中诚信" in re.sub(r"\s+", "", item.exact_text)), None)
+            if agency_block:
+                headers.append((page, index, block, agency_block))
+    if len(headers) != 1:
+        return []
+    page, header_index, header_block, agency_block = headers[0]
+    candidates = {}
+    for block in page.blocks[header_index + 1 : header_index + len(associations) + 2]:
+        if not (match := _PROSPECTUS_RATING_ROW.fullmatch(re.sub(r"\s+", " ", block.exact_text).strip())):
+            continue
+        level, raw_rating = match.groups()
+        if level not in associations or level in candidates:
+            return []
+        if raw_rating == "无评级":
+            ratings = [f"中债资信:{raw_rating}", f"中诚信国际:{raw_rating}"]
+        else:
+            rating_parts = raw_rating.split("/")
+            if len(rating_parts) != 2:
+                return []
+            ratings = [f"中债资信:{rating_parts[0]}", f"中诚信国际:{rating_parts[1]}"]
+        candidates[level] = (block, ratings)
+    if set(candidates) != set(associations):
+        return []
+    facts = []
+    for level, association in sorted(associations.items()):
+        block, ratings = candidates[level]
+        facts.append(
+            ExtractionFact(
+                fact_id=f"disclosed:issue-rating:{association.entity_key}:{block.evidence_id}",
+                field_id="issue_rating",
+                entity_key=association.entity_key,
+                status=FactStatus.DISCLOSED,
+                value=ratings,
+                evidence=[
+                    _evidence(header_block.evidence_id, artifact_scope, document_name, page.physical_page, "发行要素/评级（中债资信/中诚信）", header_block.exact_text),
+                    _evidence(agency_block.evidence_id, artifact_scope, document_name, page.physical_page, "发行要素/评级（中债资信/中诚信）", agency_block.exact_text),
+                    _evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "发行要素/分档评级", block.exact_text),
                     *association.evidence,
                 ],
             )
@@ -398,6 +438,34 @@ def _product_name(document_name: str, suffix: str) -> str:
     if not stem.endswith(suffix):
         return ""
     return re.sub(r"\s+", "", stem.removesuffix(suffix))
+
+
+def _resolve_tranche_associations(association_facts: list[ExtractionFact], product_name: str) -> dict[str, ExtractionFact] | None:
+    if not product_name:
+        return None
+    associations: dict[str, ExtractionFact] = {}
+    associated_entities = set()
+    for fact in association_facts:
+        if fact.field_id != "tranche_level":
+            continue
+        source_products = {
+            _product_name(item.document_name, "簿记建档发行结果公告")
+            for item in fact.evidence
+            if item.document_name.endswith("簿记建档发行结果公告.pdf")
+        }
+        if (
+            fact.status is not FactStatus.DISCLOSED
+            or not isinstance(fact.value, str)
+            or fact.value not in {"优先档", "次级档"}
+            or not fact.entity_key.startswith("security:")
+            or source_products != {product_name}
+            or fact.value in associations
+            or fact.entity_key in associated_entities
+        ):
+            return None
+        associations[fact.value] = fact
+        associated_entities.add(fact.entity_key)
+    return associations
 
 
 def _evidence(evidence_id: str, artifact_scope: str, document_name: str, physical_page: int, locator: str, exact_text: str) -> EvidenceRef:
