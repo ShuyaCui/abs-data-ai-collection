@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from io import BytesIO
 from npl_extract.contracts import EvidenceRef, ExtractionFact, FactStatus
+from npl_extract.extract import extract_issuance_announcement_facts
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,250 @@ def test_routes_native_scan_and_complex_table_pages() -> None:
     assert route_page(PageContent(2, "A", [])) is PageRoute.OCR
     assert route_page(PageContent(3, "表格文字", [], has_complex_table=True)) is PageRoute.HYBRID
     assert route_page(PageContent(4, "OCR 后的充足文本内容", [], ocr_requested=True)) is PageRoute.NATIVE
+
+
+def test_extracts_product_identity_cutoff_and_issue_total_from_issuance_announcement() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block(
+                    "p001:b001",
+                    1,
+                    "臻粹 2026 年第二期不良资产支持证券 发行公告\n发行规模为 182,000,000.00 元的臻粹 2026 年第二期不良资产支持证券",
+                    [0, 0, 72, 72],
+                )
+            ],
+        ),
+        PageContent(
+            2,
+            "",
+            [
+                Block("p002:b001", 2, "初始起算日 2026 年 1 月 26 日零点", [0, 0, 72, 72])
+            ],
+        ),
+    ]
+
+    facts = extract_issuance_announcement_facts(
+        pages, "臻粹2026年第二期不良资产支持证券发行公告.pdf", "product:test", "pypdf-all"
+    )
+
+    assert {(fact.field_id, fact.value) for fact in facts} == {
+        ("asset_full_name", "臻粹2026年第二期不良资产支持证券"),
+        ("initial_cutoff_date", "2026-01-26"),
+        ("issue_amount_all_tranches", "1.82"),
+    }
+    assert all(fact.status is FactStatus.DISCLOSED for fact in facts)
+    assert {fact.evidence[0].physical_page for fact in facts} == {1, 2}
+
+
+def test_issuance_full_name_comes_from_the_announcement_title_not_body_reference() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block("p001:b001", 1, "本期不良资产支持证券发行规模为 1 元", [0, 0, 72, 72]),
+                Block("p001:b002", 1, "臻粹 2026 年第二期不良资产支持证券 发行公告", [0, 0, 72, 72]),
+            ],
+        )
+    ]
+
+    facts = extract_issuance_announcement_facts(
+        pages, "臻粹2026年第二期不良资产支持证券发行公告.pdf", "product:test", "pypdf-all"
+    )
+
+    name = next(fact for fact in facts if fact.field_id == "asset_full_name")
+    assert name.value == "臻粹2026年第二期不良资产支持证券"
+    assert name.evidence[0].evidence_id == "p001:b002"
+
+
+def test_issuance_total_requires_the_current_product_title_context() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block("p001:b001", 1, "历史产品发行规模为 999,000,000.00 元", [0, 0, 72, 72]),
+                Block(
+                    "p001:b002",
+                    1,
+                    "臻粹 2026 年第二期不良资产支持证券 发行公告\n发行规模为 182,000,000.00 元的臻粹 2026 年第二期不良资产支持证券",
+                    [0, 0, 72, 72],
+                ),
+            ],
+        )
+    ]
+
+    facts = extract_issuance_announcement_facts(
+        pages, "臻粹2026年第二期不良资产支持证券发行公告.pdf", "product:test", "pypdf-all"
+    )
+
+    amount = next(fact for fact in facts if fact.field_id == "issue_amount_all_tranches")
+    assert amount.value == "1.82"
+    assert amount.evidence[0].evidence_id == "p001:b002"
+
+
+def test_issuance_rejects_ambiguous_or_comparative_issue_amounts() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block("p001:b001", 1, "臻粹 2026 年第二期不良资产支持证券发行公告", [0, 0, 72, 72]),
+                Block(
+                    "p001:b002",
+                    1,
+                    "历史产品发行规模为 999,000,000.00 元；与臻粹 2026 年第二期不良资产支持证券比较",
+                    [0, 0, 72, 72],
+                ),
+                Block(
+                    "p001:b003",
+                    1,
+                    "发行规模为 182,000,000.00 元的臻粹 2026 年第二期不良资产支持证券；发行规模为 1 元的臻粹 2026 年第二期不良资产支持证券",
+                    [0, 0, 72, 72],
+                ),
+            ],
+        )
+    ]
+
+    facts = extract_issuance_announcement_facts(
+        pages, "臻粹2026年第二期不良资产支持证券发行公告.pdf", "product:test", "pypdf-all"
+    )
+
+    assert all(fact.field_id != "issue_amount_all_tranches" for fact in facts)
+
+
+def test_issuance_rejects_issue_amount_candidates_across_blocks() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block("p001:b001", 1, "臻粹 2026 年第二期不良资产支持证券发行公告", [0, 0, 72, 72]),
+                Block(
+                    "p001:b002",
+                    1,
+                    "发行规模为 182,000,000.00 元的臻粹 2026 年第二期不良资产支持证券",
+                    [0, 0, 72, 72],
+                ),
+            ],
+        ),
+        PageContent(
+            2,
+            "",
+            [
+                Block(
+                    "p002:b001",
+                    2,
+                    "发行规模为 1 元的臻粹 2026 年第二期不良资产支持证券",
+                    [0, 0, 72, 72],
+                )
+            ],
+        ),
+    ]
+
+    facts = extract_issuance_announcement_facts(
+        pages, "臻粹2026年第二期不良资产支持证券发行公告.pdf", "product:test", "pypdf-all"
+    )
+
+    assert all(fact.field_id != "issue_amount_all_tranches" for fact in facts)
+
+
+def test_issuance_rejects_multiple_initial_cutoff_dates() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block("p001:b001", 1, "臻粹 2026 年第二期不良资产支持证券发行公告", [0, 0, 72, 72]),
+                Block("p001:b002", 1, "历史产品初始起算日 2025 年 1 月 26 日", [0, 0, 72, 72]),
+            ],
+        ),
+        PageContent(
+            2,
+            "",
+            [Block("p002:b001", 2, "初始起算日 2026 年 1 月 26 日", [0, 0, 72, 72])],
+        ),
+    ]
+
+    facts = extract_issuance_announcement_facts(
+        pages, "臻粹2026年第二期不良资产支持证券发行公告.pdf", "product:test", "pypdf-all"
+    )
+
+    assert all(fact.field_id != "initial_cutoff_date" for fact in facts)
+
+
+def test_issuance_rejects_multiple_initial_cutoff_dates_in_one_block() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block("p001:b001", 1, "臻粹 2026 年第二期不良资产支持证券发行公告", [0, 0, 72, 72]),
+                Block(
+                    "p001:b002",
+                    1,
+                    "历史产品初始起算日 2025 年 1 月 26 日；本期初始起算日 2026 年 1 月 26 日",
+                    [0, 0, 72, 72],
+                ),
+            ],
+        )
+    ]
+
+    facts = extract_issuance_announcement_facts(
+        pages, "臻粹2026年第二期不良资产支持证券发行公告.pdf", "product:test", "pypdf-all"
+    )
+
+    assert all(fact.field_id != "initial_cutoff_date" for fact in facts)
+
+
+def test_issuance_rejects_split_title_referenced_after_the_cover_page() -> None:
+    pages = [
+        PageContent(
+            2,
+            "",
+            [
+                Block("p002:b001", 2, "臻粹 2026 年第二期不良资产支持证券", [0, 0, 72, 72]),
+                Block("p002:b002", 2, "发行公告", [0, 0, 72, 72]),
+            ],
+        )
+    ]
+
+    facts = extract_issuance_announcement_facts(
+        pages, "臻粹2026年第二期不良资产支持证券发行公告.pdf", "product:test", "pypdf-all"
+    )
+
+    assert all(fact.field_id != "asset_full_name" for fact in facts)
+
+
+def test_issuance_title_and_issue_total_support_adjacent_pypdf_blocks() -> None:
+    pages = [
+        PageContent(
+            1,
+            "",
+            [
+                Block("p001:b001", 1, "臻粹 2026 年第二期不良资产支持证券 ", [0, 0, 72, 72]),
+                Block("p001:b002", 1, "发行公告（摘要）", [0, 0, 72, 72]),
+                Block("p001:b003", 1, "发行规模为 182,000,000.00 元的臻粹", [0, 0, 72, 72]),
+                Block("p001:b004", 1, "2026 年第二期不良资产支持证券（以下简称本期证券）", [0, 0, 72, 72]),
+            ],
+        )
+    ]
+
+    facts = extract_issuance_announcement_facts(
+        pages, "臻粹2026年第二期不良资产支持证券发行公告.pdf", "product:test", "pypdf-all"
+    )
+
+    assert {(fact.field_id, fact.value) for fact in facts} == {
+        ("asset_full_name", "臻粹2026年第二期不良资产支持证券"),
+        ("issue_amount_all_tranches", "1.82"),
+    }
+    name = next(fact for fact in facts if fact.field_id == "asset_full_name")
+    assert [evidence.evidence_id for evidence in name.evidence] == ["p001:b001", "p001:b002"]
+    amount = next(fact for fact in facts if fact.field_id == "issue_amount_all_tranches")
+    assert [evidence.evidence_id for evidence in amount.evidence] == ["p001:b003", "p001:b004"]
 
 
 def test_persists_idempotent_evidence_artifacts(tmp_path: Path) -> None:

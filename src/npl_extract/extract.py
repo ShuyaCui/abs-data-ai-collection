@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 import re
+from pathlib import Path
 
 from npl_extract.contracts import EvidenceRef, ExtractionFact, FactInput, FactStatus
 from npl_extract.parsers import PageContent
@@ -19,6 +20,8 @@ class RecoveryComponent:
 _REPORT_DATE = re.compile(r"报告日期\s*[：:]\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
 _IN_PROGRESS_RECOVERY = re.compile(r"^处置中\s+[\d,]+\.\d+\s+([\d,]+\.\d+)")
 _COMPLETED_RECOVERY = re.compile(r"^本期处置完毕\s+[\d,]+\.\d+\s+([\d,]+\.\d+)")
+_INITIAL_CUTOFF = re.compile(r"初始起算日\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
+_ISSUE_TOTAL = re.compile(r"发行规模为\s*([\d,]+(?:\.\d+)?)\s*元")
 
 
 def derive_npl_recovery_cash(
@@ -116,6 +119,86 @@ def extract_trustee_report_facts(
             ]
         )
         facts.append(derive_npl_recovery_cash(entity_key=entity_key, in_progress=in_progress, completed=completed))
+    return facts
+
+
+def extract_issuance_announcement_facts(
+    pages: list[PageContent], document_name: str, entity_key: str, artifact_scope: str
+) -> list[ExtractionFact]:
+    """Extract product-level facts stated directly in an issuance announcement."""
+    if "发行公告" not in document_name:
+        return []
+    product_name = Path(document_name).stem.removesuffix("发行公告")
+    if not product_name.endswith("不良资产支持证券"):
+        return []
+    facts: list[ExtractionFact] = []
+    found: set[str] = set()
+    amount_candidates = []
+    initial_cutoff_candidates = []
+    for page in pages:
+        for index, block in enumerate(page.blocks):
+            normalized = re.sub(r"\s+", "", block.exact_text)
+            next_block = page.blocks[index + 1] if index + 1 < len(page.blocks) else None
+            next_text = next_block.exact_text if next_block else ""
+            next_normalized = re.sub(r"\s+", "", next_text)
+            context = normalized + next_normalized
+            title_is_split = page.physical_page == 1 and normalized == product_name and next_normalized.startswith("发行公告")
+            title_is_inline = page.physical_page == 1 and normalized.startswith(f"{product_name}发行公告")
+            if title_is_split or title_is_inline:
+                if "asset_full_name" not in found:
+                    evidence = [_evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "公告标题", block.exact_text)]
+                    if title_is_split and next_block:
+                        evidence.append(_evidence(next_block.evidence_id, artifact_scope, document_name, page.physical_page, "公告标题", next_block.exact_text))
+                    facts.append(
+                        ExtractionFact(
+                            fact_id=f"disclosed:asset-full-name:{block.evidence_id}",
+                            field_id="asset_full_name",
+                            entity_key=entity_key,
+                            status=FactStatus.DISCLOSED,
+                            value=product_name,
+                            evidence=evidence,
+                        )
+                    )
+                    found.add("asset_full_name")
+            amount_candidates.extend(
+                (page, block, next_block, match)
+                for match in _ISSUE_TOTAL.finditer(normalized)
+                if context[match.end() :].startswith(f"的{product_name}")
+            )
+            for match in _INITIAL_CUTOFF.finditer(block.exact_text):
+                try:
+                    value = date(int(match.group(1)), int(match.group(2)), int(match.group(3))).isoformat()
+                except ValueError:
+                    continue
+                initial_cutoff_candidates.append((page, block, value))
+    if len(initial_cutoff_candidates) == 1:
+        page, block, value = initial_cutoff_candidates[0]
+        facts.append(
+            ExtractionFact(
+                fact_id=f"disclosed:initial-cutoff-date:{block.evidence_id}",
+                field_id="initial_cutoff_date",
+                entity_key=entity_key,
+                status=FactStatus.DISCLOSED,
+                value=value,
+                evidence=[_evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "初始起算日", block.exact_text)],
+            )
+        )
+    if len(amount_candidates) == 1:
+        page, block, next_block, match = amount_candidates[0]
+        evidence = [_evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "发行规模/产品相邻文本", block.exact_text)]
+        relation_end = match.end() + len(f"的{product_name}")
+        if next_block and relation_end > len(re.sub(r"\s+", "", block.exact_text)):
+            evidence.append(_evidence(next_block.evidence_id, artifact_scope, document_name, page.physical_page, "发行规模/产品相邻文本", next_block.exact_text))
+        facts.append(
+            ExtractionFact(
+                fact_id=f"disclosed:issue-amount-all:{block.evidence_id}",
+                field_id="issue_amount_all_tranches",
+                entity_key=entity_key,
+                status=FactStatus.DISCLOSED,
+                value=format(Decimal(match.group(1).replace(",", "")) / Decimal("100000000"), "f"),
+                evidence=evidence,
+            )
+        )
     return facts
 
 
