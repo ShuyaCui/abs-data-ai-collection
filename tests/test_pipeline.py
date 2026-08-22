@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from io import BytesIO
@@ -162,6 +163,7 @@ def test_docling_parser_keeps_bbox_for_a_native_page(tmp_path: Path) -> None:
     assert pages[0].page_height == 72
 
 
+@pytest.mark.skipif(os.getenv("RUN_REAL_PARSER_TESTS") != "1", reason="real Docling OCR is opt-in")
 def test_docling_ocr_option_reaches_the_worker(tmp_path: Path) -> None:
     source = tmp_path / "native.pdf"
     source.write_bytes(_text_pdf("Security ABC123"))

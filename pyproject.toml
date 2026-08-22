@@ -17,6 +17,11 @@ dev = ["pytest>=8,<9"]
 parser = [
     "docling>=2,<3",
 ]
+ocr = [
+    "paddleocr>=3,<4",
+    "paddlepaddle>=3,<4",
+    "paddlex[ocr]>=3,<4",
+]
 
 [project.scripts]
 npl-extract = "npl_extract.cli:main"
