@@ -1,0 +1,11 @@
+# The model sees only document-domain tools.  The Python executable and worker
+# are deployment configuration, never tool arguments.
+- insert:
+    - id: npl-document-tools
+      name: npl-document-tools
+      config:
+        python: !!js process.env.NPL_PYTHON ?? '.venv/bin/python'
+        worker: !!js process.cwd() + '/src/npl_extract/harness_bridge.py'
+        allowTextEgress: false
+        maxTextCalls: 8
+        maxTextChars: 1200

@@ -32,18 +32,21 @@ def main(argv: list[str] | None = None) -> int:
     parse_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
     parse_command.add_argument("--native-parser", choices=["pypdf", "docling", "docling-ocr"], default="pypdf")
     parse_command.add_argument("--pages", type=_page_range)
+    parse_command.add_argument("--document-name")
     trustee_command = commands.add_parser("extract-trustee", help="extract deterministic trustee-report facts")
     trustee_command.add_argument("pdf", type=Path)
     trustee_command.add_argument("--entity-key", required=True)
     trustee_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
     trustee_command.add_argument("--native-parser", choices=["pypdf", "docling", "docling-ocr"], default="pypdf")
     trustee_command.add_argument("--pages", type=_page_range)
+    trustee_command.add_argument("--document-name")
     extract_command = commands.add_parser("extract", help="extract deterministic facts for one supported PDF")
     extract_command.add_argument("pdf", type=Path)
     extract_command.add_argument("--entity-key")
     extract_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
     extract_command.add_argument("--native-parser", choices=["pypdf", "docling", "docling-ocr"], default="pypdf")
     extract_command.add_argument("--pages", type=_page_range)
+    extract_command.add_argument("--document-name")
     extract_command.add_argument("--association-facts", type=Path, nargs="+")
     export_command = commands.add_parser("export", help="project persisted facts to a 42-field workbook")
     export_command.add_argument("--template", type=Path, required=True)
@@ -102,26 +105,27 @@ def main(argv: list[str] | None = None) -> int:
         print(_json(asdict(result)))
         return 0 if result.accepted else 2
     staged_pdf = stage_verified_pdf(args.pdf, result.document_sha256, args.runs_dir)
+    document_name = args.document_name or args.pdf.name
     parser_id = parser_identity(args.native_parser)
     scope = _scope(parser_id, args.pages)
     pages = parse_native_pdf_isolated(staged_pdf, parser=args.native_parser, expected_sha256=result.document_sha256, page_range=args.pages)
     if args.command in {"extract-trustee", "extract"}:
         if args.command == "extract-trustee":
-            facts = extract_trustee_report_facts(pages, args.pdf.name, args.entity_key, scope)
-        elif "簿记建档发行结果公告" in args.pdf.name:
-            facts = extract_issuance_result_ocr_facts(pages, args.pdf.name, scope)
-        elif args.entity_key and args.entity_key.startswith("product:") and "发行公告" in args.pdf.name:
-            facts = extract_issuance_announcement_facts(pages, args.pdf.name, args.entity_key, scope)
-        elif args.entity_key and args.entity_key.startswith("product:") and "信用评级报告" in args.pdf.name:
-            facts = extract_rating_report_facts(pages, args.pdf.name, args.entity_key, scope)
-        elif args.entity_key and args.entity_key.startswith("product:") and "发行说明书" in args.pdf.name and args.association_facts:
+            facts = extract_trustee_report_facts(pages, document_name, args.entity_key, scope)
+        elif "簿记建档发行结果公告" in document_name:
+            facts = extract_issuance_result_ocr_facts(pages, document_name, scope)
+        elif args.entity_key and args.entity_key.startswith("product:") and "发行公告" in document_name:
+            facts = extract_issuance_announcement_facts(pages, document_name, args.entity_key, scope)
+        elif args.entity_key and args.entity_key.startswith("product:") and "信用评级报告" in document_name:
+            facts = extract_rating_report_facts(pages, document_name, args.entity_key, scope)
+        elif args.entity_key and args.entity_key.startswith("product:") and "发行说明书" in document_name and args.association_facts:
             try:
                 association_facts = _load_facts(args.association_facts)
             except (OSError, ValueError) as error:
                 print(_json({"error": str(error)}))
                 return 2
-            facts = extract_prospectus_first_interest_payment_facts(pages, args.pdf.name, association_facts, scope)
-            facts.extend(extract_prospectus_issue_rating_facts(pages, args.pdf.name, association_facts, scope))
+            facts = extract_prospectus_first_interest_payment_facts(pages, document_name, association_facts, scope)
+            facts.extend(extract_prospectus_issue_rating_facts(pages, document_name, association_facts, scope))
         else:
             facts = []
         if facts:

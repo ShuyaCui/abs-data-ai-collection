@@ -1,0 +1,9 @@
+{
+  "name": "npl-document-tools",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": "./npl-document-tools.mjs",
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.8"
+  }
+}

@@ -127,13 +127,17 @@ def stage_verified_pdf(path: Path, document_sha256: str, output_root: Path) -> P
     if sha256(content).hexdigest() != document_sha256:
         raise ValueError("PDF changed after intake")
     staged = output_root / document_sha256 / "input.pdf"
+    source_metadata = output_root / document_sha256 / "source.json"
     with _document_lock(output_root, document_sha256):
         staged.parent.mkdir(parents=True, exist_ok=True)
         if staged.is_file():
             if sha256(staged.read_bytes()).hexdigest() == document_sha256:
+                if not source_metadata.is_file():
+                    _atomic_write(source_metadata, json.dumps({"document_name": path.name}, ensure_ascii=False))
                 return staged
             raise ValueError("staged PDF hash mismatch")
         _atomic_write_bytes(staged, content)
+        _atomic_write(source_metadata, json.dumps({"document_name": path.name}, ensure_ascii=False))
         return staged
 
 
