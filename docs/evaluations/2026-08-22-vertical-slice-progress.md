@@ -12,16 +12,16 @@ This is a development coverage matrix, not a frozen gold set. “CLI verified”
 | 12 | `tranche_issue_amount` | CLI verified | OCR issuance-result announcement, actual issuance amounts |
 | 14 | `tranche_current_balance` | pending | needs report effective-date/threshold logic and security association |
 | 15 | `initial_pool_outstanding_principal_interest_fees` | function-level only | native CCXI report; secure CLI quarantines its `/URI` action |
-| 19 | `first_interest_payment_date` | pending | needs scheduled/adjusted/actual-date semantics and security association |
+| 19 | `first_interest_payment_date` | CLI verified | issuance prospectus p2 contractual first payment date, projected through explicit OCR tranche associations |
 | 25 | `latest_report_date` | CLI verified | fourth trustee report, page 1 |
 | 35 | `npl_trustee_recovery_cash` | CLI verified | fourth trustee report, pages 7 inputs and versioned derivation |
 | 39 | `cashflow_collection_table` | pending | native-x86 PP-Structure table/cell-coordinate preflight remains open |
 
 ## Current score
 
-- CLI verified: 7/12.
+- CLI verified: 8/12.
 - Function-level only: 1/12.
-- Pending: 4/12.
+- Pending: 3/12.
 - Secure product rating-report route: blocked only by a policy decision on quarantined `/URI` links; no action is executed and no bypass exists.
 
 ## Next non-model work

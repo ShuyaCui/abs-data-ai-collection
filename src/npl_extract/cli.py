@@ -10,6 +10,7 @@ from npl_extract.contracts import ExtractionFact
 from npl_extract.extract import (
     extract_issuance_announcement_facts,
     extract_issuance_result_ocr_facts,
+    extract_prospectus_first_interest_payment_facts,
     extract_rating_report_facts,
     extract_trustee_report_facts,
 )
@@ -39,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     extract_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
     extract_command.add_argument("--native-parser", choices=["pypdf", "docling", "docling-ocr"], default="pypdf")
     extract_command.add_argument("--pages", type=_page_range)
+    extract_command.add_argument("--association-facts", type=Path, nargs="+")
     export_command = commands.add_parser("export", help="project persisted facts to a 42-field workbook")
     export_command.add_argument("--template", type=Path, required=True)
     export_command.add_argument("--facts", type=Path, nargs="+", required=True)
@@ -48,12 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         from npl_extract.export import export_facts
 
         try:
-            facts = [
-                ExtractionFact.model_validate(json.loads(line))
-                for path in args.facts
-                for line in path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+            facts = _load_facts(args.facts)
             export_facts(args.template, facts, args.output)
         except (OSError, ValueError, json.JSONDecodeError) as error:
             print(_json({"error": str(error)}))
@@ -80,6 +77,13 @@ def main(argv: list[str] | None = None) -> int:
             facts = extract_issuance_announcement_facts(pages, args.pdf.name, args.entity_key, scope)
         elif args.entity_key and args.entity_key.startswith("product:") and "信用评级报告" in args.pdf.name:
             facts = extract_rating_report_facts(pages, args.pdf.name, args.entity_key, scope)
+        elif args.entity_key and args.entity_key.startswith("product:") and "发行说明书" in args.pdf.name and args.association_facts:
+            try:
+                association_facts = _load_facts(args.association_facts)
+            except (OSError, ValueError) as error:
+                print(_json({"error": str(error)}))
+                return 2
+            facts = extract_prospectus_first_interest_payment_facts(pages, args.pdf.name, association_facts, scope)
         else:
             facts = []
         if facts:
@@ -96,6 +100,15 @@ def main(argv: list[str] | None = None) -> int:
 
 def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _load_facts(paths: list[Path]) -> list[ExtractionFact]:
+    return [
+        ExtractionFact.model_validate(json.loads(line))
+        for path in paths
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 def _page_range(value: str) -> tuple[int, int]:

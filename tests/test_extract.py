@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from npl_extract.contracts import EvidenceRef, FactStatus
-from npl_extract.extract import RecoveryComponent, extract_issuance_result_ocr_facts, extract_trustee_report_facts, derive_npl_recovery_cash
+from npl_extract.contracts import EvidenceRef, ExtractionFact, FactStatus
+from npl_extract.extract import (
+    RecoveryComponent,
+    extract_issuance_result_ocr_facts,
+    extract_prospectus_first_interest_payment_facts,
+    extract_trustee_report_facts,
+    derive_npl_recovery_cash,
+)
 from npl_extract.parsers import Block, PageContent
 
 
@@ -145,3 +151,122 @@ def test_refuses_a_security_level_from_an_unrelated_ocr_name_block() -> None:
     )
 
     assert {fact.field_id for fact in facts} == {"security_code", "maturity_date", "tranche_issue_amount"}
+
+
+def test_projects_a_prospectus_first_payment_date_to_explicit_tranche_associations() -> None:
+    associations = [
+        ExtractionFact(
+            fact_id="senior-level",
+            field_id="tranche_level",
+            entity_key="security:2689075",
+            status=FactStatus.DISCLOSED,
+            value="优先档",
+            evidence=[
+                EvidenceRef(
+                    evidence_id="p001:b005",
+                    artifact_scope="docling-ocr-all",
+                    document_name="臻粹2026年第二期不良资产支持证券簿记建档发行结果公告.pdf",
+                    physical_page=1,
+                    locator="证券名称",
+                    exact_text="优先档",
+                )
+            ],
+        ),
+        ExtractionFact(
+            fact_id="subordinated-level",
+            field_id="tranche_level",
+            entity_key="security:2689076",
+            status=FactStatus.DISCLOSED,
+            value="次级档",
+            evidence=[
+                EvidenceRef(
+                    evidence_id="p002:b003",
+                    artifact_scope="docling-ocr-all",
+                    document_name="臻粹2026年第二期不良资产支持证券簿记建档发行结果公告.pdf",
+                    physical_page=2,
+                    locator="证券名称",
+                    exact_text="次级档",
+                )
+            ],
+        ),
+    ]
+    pages = [
+        PageContent(
+            2,
+            "",
+            [Block("p002:b028", 2, "资产支持证券的第一个支付日是 2026 年 5 月 23 日", None)],
+        )
+    ]
+
+    facts = extract_prospectus_first_interest_payment_facts(
+        pages,
+        "臻粹2026年第二期不良资产支持证券发行说明书.pdf",
+        associations,
+        "pypdf-pages-2-2",
+    )
+
+    assert {(fact.entity_key, fact.value) for fact in facts} == {
+        ("security:2689075", "2026-05-23"),
+        ("security:2689076", "2026-05-23"),
+    }
+    assert all(fact.field_id == "first_interest_payment_date" for fact in facts)
+    assert all({item.document_name for item in fact.evidence} == {"臻粹2026年第二期不良资产支持证券发行说明书.pdf", "臻粹2026年第二期不良资产支持证券簿记建档发行结果公告.pdf"} for fact in facts)
+
+
+def test_refuses_cross_product_or_ambiguous_tranche_associations() -> None:
+    pages = [PageContent(2, "", [Block("p002:b028", 2, "资产支持证券的第一个支付日是 2026 年 5 月 23 日", None)])]
+    association = ExtractionFact(
+        fact_id="wrong-product-level",
+        field_id="tranche_level",
+        entity_key="security:2689075",
+        status=FactStatus.DISCLOSED,
+        value="优先档",
+        evidence=[
+            EvidenceRef(
+                evidence_id="p001:b005",
+                artifact_scope="docling-ocr-all",
+                document_name="另一产品簿记建档发行结果公告.pdf",
+                physical_page=1,
+                locator="证券名称",
+                exact_text="优先档",
+            )
+        ],
+    )
+
+    assert (
+        extract_prospectus_first_interest_payment_facts(
+            pages, "臻粹2026年第二期不良资产支持证券发行说明书.pdf", [association], "pypdf-pages-2-2"
+        )
+        == []
+    )
+
+
+def test_refuses_two_tranche_levels_for_one_security() -> None:
+    pages = [PageContent(2, "", [Block("p002:b028", 2, "资产支持证券的第一个支付日是 2026 年 5 月 23 日", None)])]
+    associations = [
+        ExtractionFact(
+            fact_id=f"level-{level}",
+            field_id="tranche_level",
+            entity_key="security:2689075",
+            status=FactStatus.DISCLOSED,
+            value=level,
+            evidence=[
+                EvidenceRef(
+                    evidence_id=f"p001:{index}",
+                    artifact_scope="docling-ocr-all",
+                    document_name="臻粹2026年第二期不良资产支持证券簿记建档发行结果公告.pdf",
+                    physical_page=1,
+                    locator="证券名称",
+                    exact_text=level,
+                )
+            ],
+        )
+        for index, level in enumerate(("优先档", "次级档"), start=1)
+    ]
+
+    assert (
+        extract_prospectus_first_interest_payment_facts(
+            pages, "臻粹2026年第二期不良资产支持证券发行说明书.pdf", associations, "pypdf-pages-2-2"
+        )
+        == []
+    )

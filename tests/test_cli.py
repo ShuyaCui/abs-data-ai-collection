@@ -135,6 +135,63 @@ def test_extract_command_rejects_a_security_key_for_product_facts(tmp_path: Path
     assert json.loads(capsys.readouterr().out) == []
 
 
+def test_extract_command_projects_prospectus_payment_date_through_association_facts(tmp_path: Path, capsys, monkeypatch) -> None:
+    source = tmp_path / "臻粹2026年第二期不良资产支持证券发行说明书.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    content = BytesIO()
+    writer.write(content)
+    source.write_bytes(content.getvalue())
+    associations = tmp_path / "associations.jsonl"
+    associations.write_text(
+        json.dumps(
+            {
+                "fact_id": "senior-level",
+                "field_id": "tranche_level",
+                "entity_key": "security:2689075",
+                "status": "disclosed",
+                "value": "优先档",
+                "evidence": [
+                    {
+                        "evidence_id": "p001:b005",
+                        "artifact_scope": "docling-ocr-all",
+                        "document_name": "臻粹2026年第二期不良资产支持证券簿记建档发行结果公告.pdf",
+                        "physical_page": 1,
+                        "locator": "证券名称",
+                        "exact_text": "优先档",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
+    monkeypatch.setattr(
+        "npl_extract.cli.parse_native_pdf_isolated",
+        lambda *args, **kwargs: [
+            PageContent(2, "", [Block("p002:b028", 2, "资产支持证券的第一个支付日是 2026 年 5 月 23 日", None)])
+        ],
+    )
+
+    exit_code = main(
+        [
+            "extract",
+            str(source),
+            "--entity-key",
+            "product:test",
+            "--association-facts",
+            str(associations),
+            "--runs-dir",
+            str(tmp_path / "runs"),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output[0]["field_id"] == "first_interest_payment_date"
+    assert output[0]["entity_key"] == "security:2689075"
+
+
 def test_extract_trustee_command_rejects_a_product_key_for_report_facts(tmp_path: Path, capsys, monkeypatch) -> None:
     source = tmp_path / "受托报告.pdf"
     writer = PdfWriter()

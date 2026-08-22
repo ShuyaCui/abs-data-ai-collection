@@ -27,6 +27,7 @@ _INITIAL_POOL_SECTION = re.compile(r"资产池特征\s*[（(]\s*于初始起算�
 _SECURITY_CODE = re.compile(r"^\d{7}$")
 _EXPECTED_MATURITY = re.compile(r"^(\d{4})年(\d{1,2})月(\d{1,2})日$")
 _AMOUNT_IN_TEN_THOUSANDS = re.compile(r"^([\d,]+(?:\.\d+)?)万元$")
+_FIRST_INTEREST_PAYMENT = re.compile(r"资产支持证券的第一个支付日是\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
 
 
 def derive_npl_recovery_cash(
@@ -298,6 +299,65 @@ def extract_issuance_result_ocr_facts(
     return facts
 
 
+def extract_prospectus_first_interest_payment_facts(
+    pages: list[PageContent], document_name: str, association_facts: list[ExtractionFact], artifact_scope: str
+) -> list[ExtractionFact]:
+    """Project a uniquely disclosed first payment date through explicit tranche associations."""
+    product_name = _product_name(document_name, "发行说明书")
+    if not product_name:
+        return []
+    associations: dict[str, ExtractionFact] = {}
+    associated_entities = set()
+    for fact in association_facts:
+        if fact.field_id != "tranche_level":
+            continue
+        source_products = {
+            _product_name(item.document_name, "簿记建档发行结果公告")
+            for item in fact.evidence
+            if item.document_name.endswith("簿记建档发行结果公告.pdf")
+        }
+        if (
+            fact.status is not FactStatus.DISCLOSED
+            or fact.value not in {"优先档", "次级档"}
+            or not fact.entity_key.startswith("security:")
+            or source_products != {product_name}
+            or fact.value in associations
+            or fact.entity_key in associated_entities
+        ):
+            return []
+        associations[fact.value] = fact
+        associated_entities.add(fact.entity_key)
+    candidates = []
+    for page in pages:
+        if page.ocr_requested:
+            continue
+        for block in page.blocks:
+            if match := _FIRST_INTEREST_PAYMENT.search(block.exact_text):
+                try:
+                    candidates.append((page, block, date(int(match.group(1)), int(match.group(2)), int(match.group(3))).isoformat()))
+                except ValueError:
+                    continue
+    if len(candidates) != 1 or not associations:
+        return []
+    page, block, value = candidates[0]
+    facts = []
+    for level, association in sorted(associations.items()):
+        facts.append(
+            ExtractionFact(
+                fact_id=f"disclosed:first-interest-payment:{association.entity_key}:{block.evidence_id}",
+                field_id="first_interest_payment_date",
+                entity_key=association.entity_key,
+                status=FactStatus.DISCLOSED,
+                value=value,
+                evidence=[
+                    _evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "发行要素/第一个支付日", block.exact_text),
+                    *association.evidence,
+                ],
+            )
+        )
+    return facts
+
+
 def extract_rating_report_facts(
     pages: list[PageContent], document_name: str, entity_key: str, artifact_scope: str
 ) -> list[ExtractionFact]:
@@ -331,6 +391,13 @@ def extract_rating_report_facts(
             evidence=evidence,
         )
     ]
+
+
+def _product_name(document_name: str, suffix: str) -> str:
+    stem = Path(document_name).stem
+    if not stem.endswith(suffix):
+        return ""
+    return re.sub(r"\s+", "", stem.removesuffix(suffix))
 
 
 def _evidence(evidence_id: str, artifact_scope: str, document_name: str, physical_page: int, locator: str, exact_text: str) -> EvidenceRef:
