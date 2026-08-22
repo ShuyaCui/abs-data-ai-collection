@@ -52,9 +52,14 @@ def _has_active_content(reader: PdfReader) -> FailureCode | None:
         annotations = _dictionary(page_data.get("/Annots", []))
         for annotation in annotations:
             annotation_data = _dictionary(annotation)
-            if "/A" in annotation_data or "/AA" in annotation_data:
+            action = _dictionary(annotation_data.get("/A"))
+            if "/AA" in annotation_data or (action is not None and not _is_safe_https_uri_action(action)):
                 return FailureCode.ACTIVE_CONTENT
     return None
+
+
+def _is_safe_https_uri_action(action: Any) -> bool:
+    return "/Next" not in action and action.get("/S") == "/URI" and str(action.get("/URI", "")).startswith("https://")
 
 
 def inspect_pdf(

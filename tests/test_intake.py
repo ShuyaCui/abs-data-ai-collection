@@ -45,6 +45,54 @@ def launch_annotation_pdf() -> bytes:
     return output.getvalue()
 
 
+def https_link_annotation_pdf() -> bytes:
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=72, height=72)
+    annotation = writer._add_object(
+        DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Annot"),
+                NameObject("/Subtype"): NameObject("/Link"),
+                NameObject("/Rect"): ArrayObject([NumberObject(0), NumberObject(0), NumberObject(10), NumberObject(10)]),
+                NameObject("/A"): DictionaryObject(
+                    {NameObject("/S"): NameObject("/URI"), NameObject("/URI"): TextStringObject("https://example.test/report")}
+                ),
+            }
+        )
+    )
+    page[NameObject("/Annots")] = ArrayObject([annotation])
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
+def https_link_with_launch_next_pdf() -> bytes:
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=72, height=72)
+    annotation = writer._add_object(
+        DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Annot"),
+                NameObject("/Subtype"): NameObject("/Link"),
+                NameObject("/Rect"): ArrayObject([NumberObject(0), NumberObject(0), NumberObject(10), NumberObject(10)]),
+                NameObject("/A"): DictionaryObject(
+                    {
+                        NameObject("/S"): NameObject("/URI"),
+                        NameObject("/URI"): TextStringObject("https://example.test/report"),
+                        NameObject("/Next"): DictionaryObject(
+                            {NameObject("/S"): NameObject("/Launch"), NameObject("/F"): TextStringObject("unexpected")}
+                        ),
+                    }
+                ),
+            }
+        )
+    )
+    page[NameObject("/Annots")] = ArrayObject([annotation])
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
 def write(tmp_path: Path, name: str, content: bytes) -> Path:
     target = tmp_path / name
     target.write_bytes(content)
@@ -57,6 +105,20 @@ def test_accepts_a_small_inert_pdf(tmp_path: Path) -> None:
     assert result.accepted
     assert result.page_count == 1
     assert result.document_sha256
+
+
+def test_accepts_an_https_link_annotation_without_executing_it(tmp_path: Path) -> None:
+    result = inspect_pdf(write(tmp_path, "https-link.pdf", https_link_annotation_pdf()))
+
+    assert result.accepted
+    assert result.failure_code is None
+
+
+def test_quarantines_an_https_link_with_a_chained_launch_action(tmp_path: Path) -> None:
+    result = inspect_pdf(write(tmp_path, "https-link-chain.pdf", https_link_with_launch_next_pdf()))
+
+    assert not result.accepted
+    assert result.failure_code is FailureCode.ACTIVE_CONTENT
 
 
 @pytest.mark.parametrize(

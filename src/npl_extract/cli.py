@@ -239,7 +239,7 @@ def _extract_folder_locked(args: argparse.Namespace, input_dir: Path, output_pat
                     document["status"] = "superseded"
     facts: list[ExtractionFact] = []
     associations: list[ExtractionFact] = []
-    for role in ("issuance_announcement", "issuance_result", "prospectus", "trustee"):
+    for role in ("issuance_announcement", "issuance_result", "prospectus", "rating_report", "trustee"):
         queued = [document for document in documents if document.get("role") == role and document["status"] == "queued"]
         if len(queued) != 1:
             continue
@@ -254,6 +254,7 @@ def _extract_folder_locked(args: argparse.Namespace, input_dir: Path, output_pat
             ranges = {
                 "issuance_announcement": [((1, 2), extract_issuance_announcement_facts)],
                 "issuance_result": [((1, 2), extract_issuance_result_ocr_facts)],
+                "rating_report": [((4, 4), extract_rating_report_facts)],
                 "trustee": [((1, 7), extract_trustee_report_facts)],
                 "prospectus": [
                     ((2, 3), None), ((16, 16), extract_prospectus_actual_financing_entity_facts),
@@ -320,6 +321,8 @@ def _folder_role(document_name: str) -> str | None:
         return "issuance_announcement"
     if "发行说明书" in document_name:
         return "prospectus"
+    if "信用评级报告" in document_name and "中诚信国际" in document_name:
+        return "rating_report"
     if "受托机构报告" in document_name:
         return "trustee"
     return None
@@ -337,7 +340,12 @@ def _document_product_identity(document_name: str, role: str) -> str:
         "issuance_result": "簿记建档发行结果公告",
         "prospectus": "发行说明书",
     }
-    product = stem.removesuffix(suffixes[role]) if role in suffixes else stem.split("受托机构报告", 1)[0]
+    if role in suffixes:
+        product = stem.removesuffix(suffixes[role])
+    elif role == "rating_report":
+        product = stem.split("信用评级报告", 1)[0]
+    else:
+        product = stem.split("受托机构报告", 1)[0]
     return _canonical_product_identity(product)
 
 

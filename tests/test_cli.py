@@ -92,6 +92,44 @@ def test_extract_folder_writes_candidates_and_records_unhandled_documents(tmp_pa
     }
 
 
+def test_extract_folder_routes_ccxi_rating_report_pool_balance(tmp_path: Path, capsys, monkeypatch) -> None:
+    source = tmp_path / "臻粹不良资产支持证券信用评级报告及跟踪评级安排(中诚信国际).pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    content = BytesIO()
+    writer.write(content)
+    source.write_bytes(content.getvalue())
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+    monkeypatch.setattr(
+        "npl_extract.cli.parse_native_pdf_isolated",
+        lambda *args, **kwargs: [
+            PageContent(
+                4,
+                "",
+                [
+                    Block("p004:b017", 4, "资产池特征（于初始起算日）", None),
+                    Block("p004:b019", 4, "资产池未偿本息费余额 314,258.72 万元", None),
+                ],
+            )
+        ],
+    )
+
+    exit_code = main(
+        [
+            "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "臻粹不良资产", "--template", str(template),
+            "--output", str(output), "--runs-dir", str(tmp_path / "runs"),
+        ]
+    )
+
+    facts = [json.loads(line) for line in output.with_suffix(".jsonl").read_text().splitlines()]
+    assert exit_code == 0
+    assert [(fact["field_id"], fact["value"]) for fact in facts] == [
+        ("initial_pool_outstanding_principal_interest_fees", "3142587200")
+    ]
+
+
 def test_extract_folder_refuses_ambiguous_duplicate_document_roles(tmp_path: Path, capsys) -> None:
     for name in ("甲产品发行公告.pdf", "乙产品发行公告.pdf"):
         writer = PdfWriter()

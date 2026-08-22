@@ -1,5 +1,11 @@
 # Execution log
 
+## 2026-08-23 — MVP-v0 Gate 1: Field 15 closed
+
+- The real 中诚信国际 rating report had one p4 HTTPS `/URI` link annotation; the parser never executes it, but the former intake rule quarantined every annotation action. Intake now admits only an unchained HTTPS `/URI` action and continues to reject document actions, JavaScript, embedded files, `/Launch`, and any chained action.
+- Routed this one native 中诚信国际 rating-report page through the existing folder batch. Real result: `initial_pool_outstanding_principal_interest_fees=3142587200` CNY, source SHA-256 `797b1…24b744`, p4 evidence `p004:b017` and `p004:b019`, persisted fact artifact and batch Excel/JSONL/manifest. Gate 1 is closed.
+- Tests: intake policy regression, folder routing regression and existing balance extraction passed (`12` focused tests). Independent review found and closed the chained-action regression. Remaining MVP blockers: Field 39 native-x86 table/cell validation, 12-field batch, one live Harness→model path, human review and final acceptance.
+
 ## 2026-08-21 — MVP foundation
 
 - Added a Python package, local virtual environment configuration, and offline tests.
