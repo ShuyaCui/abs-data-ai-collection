@@ -17,12 +17,14 @@ gid=$(id -g)
 test "$uid" -ne 0 || { echo "refusing to run the OCR process as root" >&2; exit 2; }
 staging=$(mktemp -d)
 trap 'rm -rf "$staging"' 0
+memory=${NPL_PPSTRUCTURE_MEMORY:-6g}
 
 docker run --rm --platform linux/amd64 --network none --read-only \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,mode=1777,size=256m \
   --tmpfs /opt/paddlex/temp:rw,nosuid,nodev,noexec,mode=1777,size=256m \
-  --memory 4g --cpus 2 --pids-limit 256 --cap-drop ALL \
+  --memory "$memory" --cpus 2 --pids-limit 256 --cap-drop ALL \
   --security-opt no-new-privileges --user "$uid:$gid" \
+  --env PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=False \
   --mount "type=bind,src=$input,dst=/input/$name,readonly" \
   --mount "type=bind,src=$staging,dst=/output" \
   npl-ppstructure:local "/input/$name"

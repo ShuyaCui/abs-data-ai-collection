@@ -25,4 +25,9 @@ RUN uv sync --extra ocr --frozen \
 
 USER app
 
+RUN .venv/bin/python -c "from paddlex.inference.utils.official_models import official_models; [official_models.get_model_path(name) for name in ('PP-LCNet_x1_0_doc_ori', 'PP-LCNet_x1_0_textline_ori')]" \
+ && cd /opt/paddlex/official_models \
+ && find . -type f -print0 | sort -z | xargs -0 sha256sum > ../MODELS.sha256 \
+ && chmod -R a+rX /opt/paddlex
+
 ENTRYPOINT [".venv/bin/python", "docker/ppstructure_smoke.py"]
