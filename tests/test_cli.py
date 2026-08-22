@@ -150,6 +150,30 @@ def test_extract_command_persists_prospectus_issue_amounts_without_associations(
     }
 
 
+def test_extract_command_persists_prospectus_market_terms_without_associations(tmp_path: Path, capsys, monkeypatch) -> None:
+    source = tmp_path / "臻粹不良资产支持证券发行说明书.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    content = BytesIO()
+    writer.write(content)
+    source.write_bytes(content.getvalue())
+    monkeypatch.setattr(
+        "npl_extract.cli.parse_native_pdf_isolated",
+        lambda *args, **kwargs: [
+            PageContent(3, "", [Block("p003:b001", 3, "本期资产支持证券拟采用公开簿记建档的方式在全国银行间债券市场发行。", None)])
+        ],
+    )
+
+    exit_code = main(["extract", str(source), "--entity-key", "product:test", "--runs-dir", str(tmp_path / "runs")])
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert {(fact["field_id"], fact["value"]) for fact in output} == {
+        ("market", "银行间债券市场"),
+        ("issuance_method", "簿记建档"),
+    }
+
+
 def test_extract_command_rejects_a_security_key_for_product_facts(tmp_path: Path, capsys, monkeypatch) -> None:
     source = tmp_path / "臻粹不良资产支持证券发行公告.pdf"
     writer = PdfWriter()

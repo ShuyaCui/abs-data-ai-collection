@@ -33,6 +33,7 @@ _AMOUNT_IN_TEN_THOUSANDS = re.compile(r"^([\d,]+(?:\.\d+)?)万元$")
 _FIRST_INTEREST_PAYMENT = re.compile(r"资产支持证券的第一个支付日是\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
 _PROSPECTUS_ISSUE_AMOUNT_ROW = re.compile(r"^(优先档|次优[档级]|次级档)\s+([\d,]+(?:\.\d+)?)\s+\d+(?:\.\d+)?%\s+.+$")
 _PROSPECTUS_TIER_AMOUNT_ROW = re.compile(r"^.+[档级]\S*\s+[\d,]+(?:\.\d+)?\s+\d+(?:\.\d+)?%\s+.+$")
+_PROSPECTUS_ISSUANCE_ROUTE = re.compile(r"本期资产支持证券拟采用公开簿记建档的方式在全国银行间债券市场发行")
 _PROSPECTUS_RATING_ROW = re.compile(r"^(优先档|次级档)\s+.+\s+(无评级|[A-Za-z][A-Za-z0-9+.-]*(?:/[A-Za-z][A-Za-z0-9+.-]*)?)\s*$")
 
 
@@ -476,6 +477,30 @@ def extract_prospectus_issue_amount_facts(
             )
         )
     return facts
+
+
+def extract_prospectus_market_facts(
+    pages: list[PageContent], document_name: str, entity_key: str, artifact_scope: str
+) -> list[ExtractionFact]:
+    """Extract the accepted normalized market and issuance-method values from one disclosure."""
+    if not _product_name(document_name, "发行说明书"):
+        return []
+    candidates = [(page, block) for page in pages if not page.ocr_requested for block in page.blocks for _ in _PROSPECTUS_ISSUANCE_ROUTE.finditer(block.exact_text)]
+    if len(candidates) != 1:
+        return []
+    page, block = candidates[0]
+    evidence = [_evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "发行要素/发行方式及市场", block.exact_text)]
+    return [
+        ExtractionFact(
+            fact_id=f"disclosed:{field_id}:{block.evidence_id}",
+            field_id=field_id,
+            entity_key=entity_key,
+            status=FactStatus.DISCLOSED,
+            value=value,
+            evidence=evidence,
+        )
+        for field_id, value in (("market", "银行间债券市场"), ("issuance_method", "簿记建档"))
+    ]
 
 
 def extract_prospectus_issue_rating_facts(

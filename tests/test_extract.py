@@ -5,6 +5,7 @@ from npl_extract.extract import (
     RecoveryComponent,
     extract_issuance_result_ocr_facts,
     extract_prospectus_issue_amount_facts,
+    extract_prospectus_market_facts,
     extract_prospectus_issue_rating_facts,
     extract_prospectus_first_interest_payment_facts,
     extract_trustee_report_facts,
@@ -39,6 +40,40 @@ def test_derives_npl_recovery_from_disposal_rows_only() -> None:
     assert result.value == "0.6040795674"
     assert [item.fact_id for item in result.derived_inputs] == ["in-progress", "completed"]
     assert all("其他收入" not in evidence.locator for evidence in result.evidence)
+
+
+def test_extracts_the_normalized_market_and_issuance_method_from_one_unique_prospectus_statement() -> None:
+    pages = [
+        PageContent(
+            3,
+            "",
+            [
+                Block(
+                    "p003:b001",
+                    3,
+                    "本期资产支持证券拟采用公开簿记建档的方式在全国银行间债券市场发行。",
+                    None,
+                )
+            ],
+        )
+    ]
+
+    facts = extract_prospectus_market_facts(
+        pages, "臻粹2026年第二期不良资产支持证券发行说明书.pdf", "product:臻粹2026-2", "pypdf-all"
+    )
+
+    assert {(fact.field_id, fact.value) for fact in facts} == {
+        ("market", "银行间债券市场"),
+        ("issuance_method", "簿记建档"),
+    }
+    assert all(fact.evidence[0].evidence_id == "p003:b001" for fact in facts)
+
+
+def test_refuses_a_prospectus_block_that_repeats_the_issuance_route_statement() -> None:
+    statement = "本期资产支持证券拟采用公开簿记建档的方式在全国银行间债券市场发行。"
+    pages = [PageContent(3, "", [Block("p003:b001", 3, statement + statement, None)])]
+
+    assert extract_prospectus_market_facts(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
 
 
 def test_extracts_only_unique_product_level_issue_amount_rows_from_the_prospectus() -> None:
