@@ -12,6 +12,7 @@ from npl_extract.contracts import ExtractionFact, ReviewAction
 from npl_extract.extract import (
     extract_issuance_announcement_facts,
     extract_issuance_result_ocr_facts,
+    extract_prospectus_issue_amount_facts,
     extract_prospectus_first_interest_payment_facts,
     extract_prospectus_issue_rating_facts,
     extract_rating_report_facts,
@@ -118,14 +119,16 @@ def main(argv: list[str] | None = None) -> int:
             facts = extract_issuance_announcement_facts(pages, document_name, args.entity_key, scope)
         elif args.entity_key and args.entity_key.startswith("product:") and "信用评级报告" in document_name:
             facts = extract_rating_report_facts(pages, document_name, args.entity_key, scope)
-        elif args.entity_key and args.entity_key.startswith("product:") and "发行说明书" in document_name and args.association_facts:
-            try:
-                association_facts = _load_facts(args.association_facts)
-            except (OSError, ValueError) as error:
-                print(_json({"error": str(error)}))
-                return 2
-            facts = extract_prospectus_first_interest_payment_facts(pages, document_name, association_facts, scope)
-            facts.extend(extract_prospectus_issue_rating_facts(pages, document_name, association_facts, scope))
+        elif args.entity_key and args.entity_key.startswith("product:") and "发行说明书" in document_name:
+            facts = extract_prospectus_issue_amount_facts(pages, document_name, args.entity_key, scope)
+            if args.association_facts:
+                try:
+                    association_facts = _load_facts(args.association_facts)
+                except (OSError, ValueError) as error:
+                    print(_json({"error": str(error)}))
+                    return 2
+                facts.extend(extract_prospectus_first_interest_payment_facts(pages, document_name, association_facts, scope))
+                facts.extend(extract_prospectus_issue_rating_facts(pages, document_name, association_facts, scope))
         else:
             facts = []
         if facts:

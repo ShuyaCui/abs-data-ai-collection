@@ -31,6 +31,7 @@ _SECURITY_CODE = re.compile(r"^\d{7}$")
 _EXPECTED_MATURITY = re.compile(r"^(\d{4})年(\d{1,2})月(\d{1,2})日$")
 _AMOUNT_IN_TEN_THOUSANDS = re.compile(r"^([\d,]+(?:\.\d+)?)万元$")
 _FIRST_INTEREST_PAYMENT = re.compile(r"资产支持证券的第一个支付日是\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日")
+_PROSPECTUS_ISSUE_AMOUNT_ROW = re.compile(r"^(优先档|次优[档级]|次级档)\s+([\d,]+(?:\.\d+)?)\s+\d+(?:\.\d+)?%\s+.+$")
 _PROSPECTUS_RATING_ROW = re.compile(r"^(优先档|次级档)\s+.+\s+(无评级|[A-Za-z][A-Za-z0-9+.-]*(?:/[A-Za-z][A-Za-z0-9+.-]*)?)\s*$")
 
 
@@ -394,6 +395,62 @@ def extract_prospectus_first_interest_payment_facts(
             )
         )
     return facts
+
+
+def extract_prospectus_issue_amount_facts(
+    pages: list[PageContent], document_name: str, entity_key: str, artifact_scope: str
+) -> list[ExtractionFact]:
+    """Extract uniquely disclosed product-level tranche amounts from the issuance table."""
+    if not _product_name(document_name, "发行说明书"):
+        return []
+    headers = []
+    for page in pages:
+        if page.ocr_requested:
+            continue
+        for index, block in enumerate(page.blocks):
+            header_blocks = [block]
+            if "发行金额（万元）" not in re.sub(r"\s+", "", block.exact_text):
+                header_blocks = page.blocks[index : index + 2]
+            header_text = re.sub(r"\s+", "", "".join(item.exact_text for item in header_blocks))
+            if "证券名称" in header_text and "发行金额（万元）" in header_text:
+                headers.append((page, index, header_blocks))
+    if len(headers) != 1:
+        return []
+    page, header_index, header_blocks = headers[0]
+    field_ids = {"优先档": "issue_amount_senior", "次优档": "issue_amount_mezzanine", "次优级": "issue_amount_mezzanine", "次级档": "issue_amount_subordinated"}
+    candidates = {}
+    table_blocks = []
+    for block in page.blocks[header_index + 1 :]:
+        if re.sub(r"\s+", "", block.exact_text).startswith(("总计", "合计")):
+            break
+        table_blocks.append(block)
+    else:
+        return []
+    for block in table_blocks:
+        if not (match := _PROSPECTUS_ISSUE_AMOUNT_ROW.fullmatch(re.sub(r"\s+", " ", block.exact_text).strip())):
+            continue
+        level, amount = match.groups()
+        field_id = field_ids[level]
+        if field_id in candidates:
+            return []
+        candidates[field_id] = (block, format((Decimal(amount.replace(",", "")) / Decimal("10000")).normalize(), "f"))
+    return [
+        ExtractionFact(
+            fact_id=f"disclosed:{field_id}:{block.evidence_id}",
+            field_id=field_id,
+            entity_key=entity_key,
+            status=FactStatus.DISCLOSED,
+            value=value,
+            evidence=[
+                *[
+                    _evidence(item.evidence_id, artifact_scope, document_name, page.physical_page, "发行要素/证券名称及发行金额", item.exact_text)
+                    for item in header_blocks
+                ],
+                _evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "发行要素/分档发行金额", block.exact_text),
+            ],
+        )
+        for field_id, (block, value) in candidates.items()
+    ]
 
 
 def extract_prospectus_issue_rating_facts(

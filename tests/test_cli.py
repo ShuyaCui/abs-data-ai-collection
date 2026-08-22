@@ -116,6 +116,39 @@ def test_extract_command_persists_an_ocr_issuance_result_fact_set(tmp_path: Path
     assert next((tmp_path / "runs").glob("*/facts/*.jsonl")).is_file()
 
 
+def test_extract_command_persists_prospectus_issue_amounts_without_associations(tmp_path: Path, capsys, monkeypatch) -> None:
+    source = tmp_path / "臻粹不良资产支持证券发行说明书.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    content = BytesIO()
+    writer.write(content)
+    source.write_bytes(content.getvalue())
+    monkeypatch.setattr(
+        "npl_extract.cli.parse_native_pdf_isolated",
+        lambda *args, **kwargs: [
+            PageContent(
+                2,
+                "",
+                [
+                    Block("p002:b001", 2, "证券名称 发行金额（万元）规模占比", None),
+                    Block("p002:b002", 2, "优先档 13,200.00 72.53% 过手", None),
+                    Block("p002:b003", 2, "次级档 5,000.00 27.47% 过手", None),
+                    Block("p002:b004", 2, "总计 18,200.00 100.00% -", None),
+                ],
+            )
+        ],
+    )
+
+    exit_code = main(["extract", str(source), "--entity-key", "product:test", "--runs-dir", str(tmp_path / "runs")])
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert {(fact["field_id"], fact["value"]) for fact in output} == {
+        ("issue_amount_senior", "1.32"),
+        ("issue_amount_subordinated", "0.5"),
+    }
+
+
 def test_extract_command_rejects_a_security_key_for_product_facts(tmp_path: Path, capsys, monkeypatch) -> None:
     source = tmp_path / "臻粹不良资产支持证券发行公告.pdf"
     writer = PdfWriter()

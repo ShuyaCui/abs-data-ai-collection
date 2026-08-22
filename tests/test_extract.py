@@ -4,6 +4,7 @@ from npl_extract.contracts import EvidenceRef, ExtractionFact, FactStatus
 from npl_extract.extract import (
     RecoveryComponent,
     extract_issuance_result_ocr_facts,
+    extract_prospectus_issue_amount_facts,
     extract_prospectus_issue_rating_facts,
     extract_prospectus_first_interest_payment_facts,
     extract_trustee_report_facts,
@@ -38,6 +39,69 @@ def test_derives_npl_recovery_from_disposal_rows_only() -> None:
     assert result.value == "0.6040795674"
     assert [item.fact_id for item in result.derived_inputs] == ["in-progress", "completed"]
     assert all("其他收入" not in evidence.locator for evidence in result.evidence)
+
+
+def test_extracts_only_unique_product_level_issue_amount_rows_from_the_prospectus() -> None:
+    pages = [
+        PageContent(
+            2,
+            "",
+            [
+                Block("p002:b001", 2, "证券名称 发行金额（万元）规模占比 还本方式", None),
+                Block("p002:b002", 2, "优先档 13,200.00 72.53% 过手 固定利率", None),
+                Block("p002:b003", 2, "次级档 5,000.00 27.47% 过手 无票面利率", None),
+                Block("p002:b004", 2, "总计 18,200.00 100.00% -", None),
+            ],
+        )
+    ]
+
+    facts = extract_prospectus_issue_amount_facts(
+        pages, "臻粹2026年第二期不良资产支持证券发行说明书.pdf", "product:臻粹2026-2", "pypdf-all"
+    )
+
+    assert {(fact.field_id, fact.value) for fact in facts} == {
+        ("issue_amount_senior", "1.32"),
+        ("issue_amount_subordinated", "0.5"),
+    }
+    assert all([evidence.evidence_id for evidence in fact.evidence] == ["p002:b001", fact.evidence[-1].evidence_id] for fact in facts)
+
+
+def test_refuses_equivalent_mezzanine_labels_with_conflicting_amounts() -> None:
+    pages = [
+        PageContent(
+            2,
+            "",
+            [
+                Block("p002:b001", 2, "证券名称 发行金额（万元）规模占比", None),
+                Block("p002:b002", 2, "次优档 100.00 1.00% 过手", None),
+                Block("p002:b003", 2, "次优级 200.00 2.00% 过手", None),
+                Block("p002:b004", 2, "总计 300.00 3.00% -", None),
+            ],
+        )
+    ]
+
+    assert extract_prospectus_issue_amount_facts(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
+
+
+def test_refuses_a_duplicate_issue_amount_row_later_in_the_same_table() -> None:
+    pages = [
+        PageContent(
+            2,
+            "",
+            [
+                Block("p002:b001", 2, "证券名称 发行金额（万元）规模占比", None),
+                Block("p002:b002", 2, "优先档 100.00 1.00% 过手", None),
+                Block("p002:b003", 2, "说明一", None),
+                Block("p002:b004", 2, "说明二", None),
+                Block("p002:b005", 2, "说明三", None),
+                Block("p002:b006", 2, "说明四", None),
+                Block("p002:b007", 2, "优先档 200.00 2.00% 过手", None),
+                Block("p002:b008", 2, "总计 300.00 3.00% -", None),
+            ],
+        )
+    ]
+
+    assert extract_prospectus_issue_amount_facts(pages, "臻粹不良资产支持证券发行说明书.pdf", "product:臻粹", "pypdf-all") == []
 
 
 def test_extracts_trustee_report_date_and_recovery_with_evidence() -> None:
