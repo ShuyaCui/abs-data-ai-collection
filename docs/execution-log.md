@@ -12,6 +12,12 @@
 - Real prospectus p112–113 native parsing correctly emits no Field 39 candidate without table-cell coordinates; no native text is misrepresented as a cell.
 - Focused regression plus full offline suite: 156 passed, 1 skipped. Native x86 table/cell validation remains the only Field 39 blocker; exact command is in `docs/evaluations/2026-08-23-cashflow-table-contract.md`.
 
+## 2026-08-23 — MVP-v0 Gate 3: real 12-field batch rerun
+
+- Re-ran `extract-folder` from the ten source PDFs after Field 15 admission: 33 candidate/supporting facts, candidate JSONL, Excel evidence workbook and manifest were written under `runs/sample/mvp-v0-candidate.*`.
+- The eleven currently runnable target fields have candidate facts with nonempty document/page/evidence ID/exact-text evidence; the scan found zero non-null facts without evidence. Field 39 is explicitly `BLOCKED: PPSTRUCTURE_NATIVE_X86_PREFLIGHT_REQUIRED` in the batch manifest, not silently absent.
+- Gate 3 is complete for the current environment. The only extraction blocker carried forward is native-x86 Field 39 validation.
+
 ## 2026-08-21 — MVP foundation
 
 - Added a Python package, local virtual environment configuration, and offline tests.

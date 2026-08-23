@@ -307,10 +307,17 @@ def _extract_folder_locked(args: argparse.Namespace, input_dir: Path, output_pat
     facts.extend(derived)
     facts_path = output_path.with_suffix(".jsonl")
     manifest_path = output_path.with_suffix(".manifest.json")
+    field_statuses = {}
+    if any(document.get("role") == "prospectus" and document["status"] in {"processed", "no_facts"} for document in documents) and not any(
+        fact.field_id == "cashflow_collection_table" for fact in facts
+    ):
+        field_statuses["cashflow_collection_table"] = {
+            "status": "BLOCKED", "reason": "PPSTRUCTURE_NATIVE_X86_PREFLIGHT_REQUIRED"
+        }
     manifest = {
         "input_dir": str(input_dir), "product_key": args.product_key, "product_name": args.product_name,
         "batch_sha256": batch_sha256, "generated_at": datetime.now(UTC).isoformat(), "documents": documents,
-        "derived_facts_artifact": str(derived_artifact.path) if derived_artifact else None, "fact_count": len(facts),
+        "derived_facts_artifact": str(derived_artifact.path) if derived_artifact else None, "field_statuses": field_statuses, "fact_count": len(facts),
     }
     _publish_batch_outputs(args.template, facts, output_path, facts_path, manifest_path, manifest)
     print(_json({"output": str(output_path), "facts": str(facts_path), "manifest": str(manifest_path), "fact_count": len(facts)}))

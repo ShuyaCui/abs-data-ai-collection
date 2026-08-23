@@ -159,9 +159,34 @@ def test_extract_folder_persists_cashflow_table_rows_from_coordinate_cells(tmp_p
     ])
 
     facts = [json.loads(line) for line in output.with_suffix(".jsonl").read_text().splitlines()]
+    manifest = json.loads(output.with_suffix(".manifest.json").read_text())
     assert exit_code == 0
     assert [fact["entity_key"] for fact in facts] == ["cashflow_row:test:2026-01", "cashflow_row:test:total"]
     assert load_workbook(output)["现金流归集表"]["A2"].value == "2026-01"
+    assert "cashflow_collection_table" not in manifest["field_statuses"]
+
+
+def test_extract_folder_records_the_field39_runtime_blocker(tmp_path: Path, capsys) -> None:
+    source = tmp_path / "臻粹不良资产支持证券发行说明书.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    content = BytesIO()
+    writer.write(content)
+    source.write_bytes(content.getvalue())
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+
+    exit_code = main([
+        "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "臻粹不良资产", "--template", str(template),
+        "--output", str(output), "--runs-dir", str(tmp_path / "runs"),
+    ])
+
+    manifest = json.loads(output.with_suffix(".manifest.json").read_text())
+    assert exit_code == 0
+    assert manifest["field_statuses"]["cashflow_collection_table"] == {
+        "status": "BLOCKED", "reason": "PPSTRUCTURE_NATIVE_X86_PREFLIGHT_REQUIRED"
+    }
 
 
 def test_extract_folder_refuses_ambiguous_duplicate_document_roles(tmp_path: Path, capsys) -> None:
