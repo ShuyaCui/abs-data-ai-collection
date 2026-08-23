@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from pypdf import PdfWriter
 
-from npl_extract.parsers import Block, PageContent, PageRoute, PypdfNativeParser, parse_native_pdf_isolated, route_page
+from npl_extract.parsers import Block, PageContent, PageRoute, PypdfNativeParser, Table, TableCell, parse_native_pdf_isolated, route_page, tables_from_ppstructure_result
 from npl_extract.pipeline import persist_facts, persist_page_artifacts, stage_verified_pdf
 
 
@@ -26,6 +26,52 @@ def test_routes_native_scan_and_complex_table_pages() -> None:
     assert route_page(PageContent(2, "A", [])) is PageRoute.OCR
     assert route_page(PageContent(3, "表格文字", [], has_complex_table=True)) is PageRoute.HYBRID
     assert route_page(PageContent(4, "OCR 后的充足文本内容", [], ocr_requested=True)) is PageRoute.NATIVE
+
+
+def test_persists_parser_owned_table_cells_with_coordinates(tmp_path: Path) -> None:
+    page = PageContent(
+        112,
+        "现金流归集表",
+        tables=[
+            Table(
+                table_id="p112:t001",
+                physical_page=112,
+                cells=[
+                    TableCell("p112:t001:r000:c000", 112, "p112:t001", 0, 0, "期数", [10, 20, 30, 40]),
+                    TableCell("p112:t001:r001:c000", 112, "p112:t001", 1, 0, "2026 年 1 月", [10, 40, 30, 60]),
+                ],
+            )
+        ],
+    )
+
+    persisted = persist_page_artifacts("e" * 64, [page], tmp_path)
+
+    assert route_page(page) is PageRoute.HYBRID
+    assert json.loads((persisted.run_dir / "tables.jsonl").read_text()) == {
+        "table_id": "p112:t001",
+        "physical_page": 112,
+        "cells": [
+            {"evidence_id": "p112:t001:r000:c000", "physical_page": 112, "table_id": "p112:t001", "row": 0, "column": 0, "exact_text": "期数", "bbox": [10, 20, 30, 40]},
+            {"evidence_id": "p112:t001:r001:c000", "physical_page": 112, "table_id": "p112:t001", "row": 1, "column": 0, "exact_text": "2026 年 1 月", "bbox": [10, 40, 30, 60]},
+        ],
+    }
+
+
+def test_normalizes_ppstructure_cells_to_the_table_artifact_contract() -> None:
+    tables = tables_from_ppstructure_result(
+        {"res": {"table_res_list": [{
+            "pred_html": "<table><tr><td>期数</td><td>预计回收金额（万元）</td></tr><tr><td>2026 年 1 月</td><td>160.70</td></tr></table>",
+            "table_ocr_pred": {"rec_texts": ["期数", "预计回收金额（万元）", "2026 年 1 月", "160.70"], "rec_boxes": [[0, 0, 1, 1], [1, 0, 2, 1], [0, 1, 1, 2], [1, 1, 2, 2]]},
+        }]}},
+        physical_page=112,
+    )
+
+    assert tables == [Table("p112:t001", 112, [
+        TableCell("p112:t001:r000:c000", 112, "p112:t001", 0, 0, "期数", [0, 0, 1, 1]),
+        TableCell("p112:t001:r000:c001", 112, "p112:t001", 0, 1, "预计回收金额（万元）", [1, 0, 2, 1]),
+        TableCell("p112:t001:r001:c000", 112, "p112:t001", 1, 0, "2026 年 1 月", [0, 1, 1, 2]),
+        TableCell("p112:t001:r001:c001", 112, "p112:t001", 1, 1, "160.70", [1, 1, 2, 2]),
+    ])]
 
 
 def test_extracts_product_identity_cutoff_and_issue_total_from_issuance_announcement() -> None:
@@ -543,11 +589,11 @@ def test_repairs_an_incomplete_artifact_run_instead_of_reusing_it(tmp_path: Path
     assert (repaired.run_dir / "blocks.jsonl").is_file()
 
 
-def test_repairs_a_run_created_by_a_different_pipeline_version(tmp_path: Path) -> None:
+def test_repairs_a_run_created_by_the_pre_table_pipeline_version(tmp_path: Path) -> None:
     pages = [PageContent(1, "证券代码 ABC123", [])]
     first = persist_page_artifacts("c" * 64, pages, tmp_path)
     manifest_path = first.run_dir / "manifest.json"
-    manifest_path.write_text('{"document_sha256":"' + "c" * 64 + '","pipeline_version":"old","scope":"all"}')
+    manifest_path.write_text('{"document_sha256":"' + "c" * 64 + '","pipeline_version":"v3","scope":"all"}')
 
     repaired = persist_page_artifacts("c" * 64, pages, tmp_path)
 

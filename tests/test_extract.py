@@ -16,8 +16,9 @@ from npl_extract.extract import (
     extract_trustee_report_facts,
     derive_unit_remaining_face_values,
     derive_npl_recovery_cash,
+    extract_cashflow_collection_table_facts,
 )
-from npl_extract.parsers import Block, PageContent
+from npl_extract.parsers import Block, PageContent, Table, TableCell
 
 
 def component(fact_id: str, amount: str, row: str) -> RecoveryComponent:
@@ -46,6 +47,78 @@ def test_derives_npl_recovery_from_disposal_rows_only() -> None:
     assert result.value == "0.6040795674"
     assert [item.fact_id for item in result.derived_inputs] == ["in-progress", "completed"]
     assert all("其他收入" not in evidence.locator for evidence in result.evidence)
+
+
+def test_extracts_cashflow_rows_from_parser_owned_table_cells() -> None:
+    pages = [
+        PageContent(
+            112,
+            "",
+            tables=[
+                Table(
+                    table_id="p112:t001",
+                    physical_page=112,
+                    cells=[
+                        TableCell("p112:t001:r000:c000", 112, "p112:t001", 0, 0, "期数", [0, 0, 1, 1]),
+                        TableCell("p112:t001:r000:c001", 112, "p112:t001", 0, 1, "预计回收金额（万元）", [1, 0, 2, 1]),
+                        TableCell("p112:t001:r000:c002", 112, "p112:t001", 0, 2, "预计回收金额占比（%）", [2, 0, 3, 1]),
+                        TableCell("p112:t001:r001:c000", 112, "p112:t001", 1, 0, "2026 年 1 月", [0, 1, 1, 2]),
+                        TableCell("p112:t001:r001:c001", 112, "p112:t001", 1, 1, "160.70", [1, 1, 2, 2]),
+                        TableCell("p112:t001:r001:c002", 112, "p112:t001", 1, 2, "0.65", [2, 1, 3, 2]),
+                    ],
+                )
+            ],
+        ),
+        PageContent(
+            113,
+            "",
+            tables=[
+                Table(
+                    table_id="p113:t001",
+                    physical_page=113,
+                    cells=[
+                        TableCell("p113:t001:r000:c000", 113, "p113:t001", 0, 0, "期数", [0, 0, 1, 1]),
+                        TableCell("p113:t001:r000:c001", 113, "p113:t001", 0, 1, "预计回收金额（万元）", [1, 0, 2, 1]),
+                        TableCell("p113:t001:r000:c002", 113, "p113:t001", 0, 2, "预计回收金额占比（%）", [2, 0, 3, 1]),
+                        TableCell("p113:t001:r001:c000", 113, "p113:t001", 1, 0, "2027 年 5 月", [0, 1, 1, 2]),
+                        TableCell("p113:t001:r001:c001", 113, "p113:t001", 1, 1, "708.67", [1, 1, 2, 2]),
+                        TableCell("p113:t001:r001:c002", 113, "p113:t001", 1, 2, "2.85", [2, 1, 3, 2]),
+                        TableCell("p113:t001:r002:c000", 113, "p113:t001", 2, 0, "合计", [0, 2, 1, 3]),
+                        TableCell("p113:t001:r002:c001", 113, "p113:t001", 2, 1, "869.36", [1, 2, 2, 3]),
+                        TableCell("p113:t001:r002:c002", 113, "p113:t001", 2, 2, "3.50", [2, 2, 3, 3]),
+                    ],
+                )
+            ],
+        ),
+    ]
+
+    facts = extract_cashflow_collection_table_facts(pages, "发行说明书.pdf", "product:臻粹2026-2", "ppstructure-v3-pages-112-113")
+
+    assert [(fact.entity_key, fact.value) for fact in facts] == [
+        ("cashflow_row:臻粹2026-2:2026-01", {"period": "2026-01", "expected_recovery_amount_10k_cny": "160.70", "expected_recovery_amount_ratio_percent": "0.65"}),
+        ("cashflow_row:臻粹2026-2:2027-05", {"period": "2027-05", "expected_recovery_amount_10k_cny": "708.67", "expected_recovery_amount_ratio_percent": "2.85"}),
+        ("cashflow_row:臻粹2026-2:total", {"period": "total", "expected_recovery_amount_10k_cny": "869.36", "expected_recovery_amount_ratio_percent": "3.50", "computed_expected_recovery_amount_10k_cny": "869.37", "computed_expected_recovery_amount_ratio_percent": "3.50", "amount_tolerance_10k_cny": "0.01", "ratio_tolerance_percent": "0.01"}),
+    ]
+    assert {evidence.evidence_id for evidence in facts[0].evidence} == {
+        "p112:t001:r000:c000", "p112:t001:r000:c001", "p112:t001:r000:c002", "p112:t001:r001:c000", "p112:t001:r001:c001", "p112:t001:r001:c002"
+    }
+    assert all(evidence.locator.startswith("资产池预计整体回收分布情况/") for fact in facts for evidence in fact.evidence)
+
+
+def test_refuses_cashflow_rows_when_a_table_row_has_no_ratio_cell() -> None:
+    table = Table(
+        table_id="p112:t001",
+        physical_page=112,
+        cells=[
+            TableCell("p112:t001:r000:c000", 112, "p112:t001", 0, 0, "期数", [0, 0, 1, 1]),
+            TableCell("p112:t001:r000:c001", 112, "p112:t001", 0, 1, "预计回收金额（万元）", [1, 0, 2, 1]),
+            TableCell("p112:t001:r000:c002", 112, "p112:t001", 0, 2, "预计回收金额占比（%）", [2, 0, 3, 1]),
+            TableCell("p112:t001:r001:c000", 112, "p112:t001", 1, 0, "2026 年 1 月", [0, 1, 1, 2]),
+            TableCell("p112:t001:r001:c001", 112, "p112:t001", 1, 1, "160.70", [1, 1, 2, 2]),
+        ],
+    )
+
+    assert extract_cashflow_collection_table_facts([PageContent(112, "", tables=[table])], "发行说明书.pdf", "product:臻粹2026-2", "ppstructure-v3-pages-112-112") == []
 
 
 def test_derives_unit_remaining_face_values_from_matching_security_facts() -> None:

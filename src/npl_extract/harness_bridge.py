@@ -92,6 +92,14 @@ def retrieve_evidence(payload: dict[str, object]) -> dict[str, object]:
                 excerpt["exact_text"] = excerpt["exact_text"][:max_text_chars]
                 excerpt["truncated"] = True
             return {"operation": "retrieve_evidence", "status": "ok", "result": {"scope": scope_dir.name, "evidence": excerpt}}
+    for table in _jsonl(scope_dir / "tables.jsonl"):
+        for cell in table.get("cells", []):
+            if isinstance(cell, dict) and cell.get("evidence_id") == evidence_id:
+                excerpt = dict(cell)
+                if max_text_chars is not None and isinstance(excerpt.get("exact_text"), str) and len(excerpt["exact_text"]) > max_text_chars:
+                    excerpt["exact_text"] = excerpt["exact_text"][:max_text_chars]
+                    excerpt["truncated"] = True
+                return {"operation": "retrieve_evidence", "status": "ok", "result": {"scope": scope_dir.name, "evidence": excerpt}}
     return {"operation": "retrieve_evidence", "status": "not_found", "result": {"evidence_id": evidence_id}}
 
 
@@ -166,14 +174,25 @@ def validate_facts(payload: dict[str, object]) -> dict[str, object]:
         canonical_evidence = []
         for evidence in fact.evidence:
             blocks = _jsonl(_scope_dir(run_dir, evidence.artifact_scope) / "blocks.jsonl")
-            if not any(
+            if any(
                 block.get("evidence_id") == evidence.evidence_id
                 and block.get("physical_page") == evidence.physical_page
                 and block.get("exact_text") == evidence.exact_text
                 for block in blocks
             ):
-                raise ValueError(f"evidence {evidence.evidence_id} is not a parser-owned block")
-            canonical_evidence.append(evidence.model_copy(update={"document_name": document_name, "locator": f"block:{evidence.evidence_id}"}))
+                locator = f"block:{evidence.evidence_id}"
+            elif any(
+                cell.get("evidence_id") == evidence.evidence_id
+                and cell.get("physical_page") == evidence.physical_page
+                and cell.get("exact_text") == evidence.exact_text
+                for table in _jsonl(_scope_dir(run_dir, evidence.artifact_scope) / "tables.jsonl")
+                for cell in table.get("cells", [])
+                if isinstance(cell, dict)
+            ):
+                locator = f"table_cell:{evidence.evidence_id}"
+            else:
+                raise ValueError(f"evidence {evidence.evidence_id} is not parser-owned")
+            canonical_evidence.append(evidence.model_copy(update={"document_name": document_name, "locator": locator}))
         canonical_facts.append(fact.model_copy(update={"evidence": canonical_evidence}))
     return {"operation": "validate_facts", "status": "ok", "result": {"facts": _externalize_facts([fact.model_dump(mode="json") for fact in canonical_facts], payload)}}
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from html.parser import HTMLParser
 from importlib.metadata import PackageNotFoundError, version
 import json
 from pathlib import Path
@@ -30,18 +31,98 @@ class Block:
 
 
 @dataclass(frozen=True)
+class TableCell:
+    evidence_id: str
+    physical_page: int
+    table_id: str
+    row: int
+    column: int
+    exact_text: str
+    bbox: list[float] | None  # Parser-owned coordinates, [left, top, right, bottom].
+
+
+@dataclass(frozen=True)
+class Table:
+    table_id: str
+    physical_page: int
+    cells: list[TableCell]
+
+
+@dataclass(frozen=True)
 class PageContent:
     physical_page: int
     native_text: str
     blocks: list[Block] = field(default_factory=list)
+    tables: list[Table] = field(default_factory=list)
     has_complex_table: bool = False
     page_width: float | None = None
     page_height: float | None = None
     ocr_requested: bool = False
 
 
+class _TableGrid(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows: list[list[str]] = []
+        self._row: list[str] | None = None
+        self._cell: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "tr":
+            self._row = []
+        elif tag in {"td", "th"} and self._row is not None:
+            self._cell = []
+
+    def handle_data(self, data: str) -> None:
+        if self._cell is not None:
+            self._cell.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"td", "th"} and self._row is not None and self._cell is not None:
+            self._row.append("".join(self._cell).strip())
+            self._cell = None
+        elif tag == "tr" and self._row is not None:
+            self.rows.append(self._row)
+            self._row = None
+
+
+def tables_from_ppstructure_result(payload: dict[str, object], *, physical_page: int) -> list[Table]:
+    """Normalize PP-StructureV3 table OCR output to parser-owned cells."""
+    result = payload.get("res", payload)
+    if not isinstance(result, dict):
+        return []
+    raw_tables = result.get("table_res_list")
+    if not isinstance(raw_tables, list):
+        return []
+    tables = []
+    for index, raw_table in enumerate(raw_tables, start=1):
+        if not isinstance(raw_table, dict):
+            continue
+        html = raw_table.get("pred_html")
+        table_ocr = raw_table.get("table_ocr_pred")
+        if not isinstance(html, str) or not isinstance(table_ocr, dict):
+            continue
+        grid = _TableGrid()
+        grid.feed(html)
+        positions = [(row, column) for row, cells in enumerate(grid.rows) for column in range(len(cells))]
+        texts = table_ocr.get("rec_texts")
+        boxes = table_ocr.get("rec_boxes")
+        if not isinstance(texts, list) or not isinstance(boxes, list) or len(positions) != len(texts) or len(texts) != len(boxes):
+            continue
+        table_id = f"p{physical_page:03d}:t{index:03d}"
+        cells = []
+        for (row, column), text, bbox in zip(positions, texts, boxes, strict=True):
+            if not isinstance(text, str) or not isinstance(bbox, list) or len(bbox) != 4:
+                cells = []
+                break
+            cells.append(TableCell(f"{table_id}:r{row:03d}:c{column:03d}", physical_page, table_id, row, column, text, bbox))
+        if cells:
+            tables.append(Table(table_id, physical_page, cells))
+    return tables
+
+
 def route_page(page: PageContent) -> PageRoute:
-    if page.has_complex_table and page.native_text.strip():
+    if (page.has_complex_table or page.tables) and page.native_text.strip():
         return PageRoute.HYBRID
     return PageRoute.NATIVE if len(page.native_text.strip()) >= MIN_NATIVE_CHARS else PageRoute.OCR
 
@@ -145,6 +226,7 @@ def parse_native_pdf_isolated(
             physical_page=item["physical_page"],
             native_text=item["native_text"],
             blocks=[Block(**block) for block in item["blocks"]],
+            tables=[Table(table_id=table["table_id"], physical_page=table["physical_page"], cells=[TableCell(**cell) for cell in table["cells"]]) for table in item.get("tables", [])],
             has_complex_table=item["has_complex_table"],
             page_width=item.get("page_width"),
             page_height=item.get("page_height"),

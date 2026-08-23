@@ -73,7 +73,7 @@ class ExtractionFact(BaseModel):
     field_id: str
     entity_key: str
     status: FactStatus
-    value: str | StrictBool | list[str] | None = None
+    value: str | StrictBool | list[str] | dict[str, str] | None = None
     evidence: list[EvidenceRef] = Field(default_factory=list)
     effective_at: date | None = None
     rule_version: str | None = None
@@ -97,6 +97,24 @@ class ExtractionFact(BaseModel):
             raise ValueError("string[] facts require a non-empty string array")
         if contract.value_type != "string[]" and isinstance(self.value, list):
             raise ValueError("only string[] fields may carry an array value")
+        if contract.value_type == "table" and self.value is not None and (
+            not isinstance(self.value, dict)
+            or not any(
+                set(self.value) == keys
+                for keys in (
+                    {"period", "expected_recovery_amount_10k_cny", "expected_recovery_amount_ratio_percent"},
+                    {
+                    "period", "expected_recovery_amount_10k_cny", "expected_recovery_amount_ratio_percent",
+                    "computed_expected_recovery_amount_10k_cny", "computed_expected_recovery_amount_ratio_percent",
+                    "amount_tolerance_10k_cny", "ratio_tolerance_percent",
+                    },
+                )
+            )
+            or not all(isinstance(item, str) and item for item in self.value.values())
+        ):
+            raise ValueError("cashflow table facts require one complete row or total")
+        if contract.value_type != "table" and isinstance(self.value, dict):
+            raise ValueError("only table fields may carry an object")
         if self.status is FactStatus.DISCLOSED and (self.value is None or not self.evidence):
             raise ValueError("disclosed facts require a value and evidence")
         if self.status is FactStatus.DERIVED:

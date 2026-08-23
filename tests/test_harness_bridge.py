@@ -61,6 +61,16 @@ def test_harness_bridge_truncates_an_approved_evidence_excerpt(tmp_path: Path) -
     assert response["result"]["evidence"] == {"evidence_id": "block:1", "physical_page": 1, "exact_text": "123", "truncated": True}
 
 
+def test_harness_bridge_retrieves_a_table_cell_excerpt(tmp_path: Path) -> None:
+    scope = tmp_path / SHA256 / "ppstructure-v3-pages-112-113"
+    scope.mkdir(parents=True)
+    (scope / "tables.jsonl").write_text(json.dumps({"table_id": "p112:t001", "physical_page": 112, "cells": [{"evidence_id": "p112:t001:r001:c001", "physical_page": 112, "table_id": "p112:t001", "row": 1, "column": 1, "exact_text": "160.70", "bbox": [1, 2, 3, 4]}]}) + "\n")
+
+    response = _call(tmp_path, "retrieve_evidence", {"document_sha256": SHA256, "scope": "ppstructure-v3-pages-112-113", "evidence_id": "p112:t001:r001:c001"})
+
+    assert response["result"]["evidence"]["exact_text"] == "160.70"
+
+
 def test_harness_bridge_caps_total_fact_evidence_text_per_response() -> None:
     facts = [{"evidence": [{"exact_text": "1234"}, {"exact_text": "5678"}]}]
 
@@ -120,6 +130,23 @@ def test_harness_bridge_validates_facts_against_parser_owned_evidence(tmp_path: 
     response = _call(tmp_path, "validate_facts", {"document_sha256": SHA256, "fact_ids": [fact_id], "redact_evidence_text": True})
 
     assert response["result"]["facts"][0]["evidence"] == [{"evidence_id": "block:1", "artifact_scope": "pypdf-all", "document_name": "可信报告.pdf", "physical_page": 1, "locator": "block:block:1", "exact_text": ""}]
+
+
+def test_harness_bridge_validates_a_parser_owned_table_cell(tmp_path: Path) -> None:
+    scope = tmp_path / SHA256 / "ppstructure-v3-pages-112-113"
+    scope.mkdir(parents=True)
+    (scope / "tables.jsonl").write_text(json.dumps({"table_id": "p112:t001", "physical_page": 112, "cells": [{"evidence_id": "p112:t001:r001:c001", "physical_page": 112, "table_id": "p112:t001", "row": 1, "column": 1, "exact_text": "160.70", "bbox": [1, 2, 3, 4]}]}) + "\n")
+    (tmp_path / SHA256 / "source.json").write_text(json.dumps({"document_name": "发行说明书.pdf"}))
+    fact = {
+        "fact_id": "cashflow:2026-01", "field_id": "cashflow_collection_table", "entity_key": "cashflow_row:test:2026-01", "status": "disclosed",
+        "value": {"period": "2026-01", "expected_recovery_amount_10k_cny": "160.70", "expected_recovery_amount_ratio_percent": "0.65"},
+        "evidence": [{"evidence_id": "p112:t001:r001:c001", "artifact_scope": "ppstructure-v3-pages-112-113", "document_name": "sample.pdf", "physical_page": 112, "locator": "row", "exact_text": "160.70"}],
+    }
+
+    fact_id = _persist_candidate(tmp_path, fact)
+    response = _call(tmp_path, "validate_facts", {"document_sha256": SHA256, "fact_ids": [fact_id], "redact_evidence_text": True})
+
+    assert response["result"]["facts"][0]["evidence"] == [{"evidence_id": "p112:t001:r001:c001", "artifact_scope": "ppstructure-v3-pages-112-113", "document_name": "发行说明书.pdf", "physical_page": 112, "locator": "table_cell:p112:t001:r001:c001", "exact_text": ""}]
 
 
 def test_harness_bridge_rejects_a_model_supplied_fact_payload(tmp_path: Path) -> None:

@@ -26,3 +26,13 @@ def test_restricted_ppstructure_launcher_guards_its_boundary(tmp_path: Path) -> 
     ):
         assert required in source
     assert "src=$output,dst=/output" not in source
+
+
+def test_restricted_ppstructure_launcher_requires_a_positive_physical_page(tmp_path: Path) -> None:
+    source = tmp_path / "input.png"
+    source.write_bytes(b"image")
+
+    result = subprocess.run(["sh", "docker/run-ppstructure-smoke.sh", str(source), str(tmp_path / "output"), "0"], capture_output=True, text=True)
+
+    assert result.returncode == 2
+    assert "physical page" in result.stderr

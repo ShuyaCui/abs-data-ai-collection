@@ -22,6 +22,7 @@ from npl_extract.extract import (
     extract_prospectus_revolving_purchase_fact,
     extract_prospectus_first_interest_payment_facts,
     extract_prospectus_issue_rating_facts,
+    extract_cashflow_collection_table_facts,
     extract_rating_report_facts,
     extract_trustee_report_facts,
 )
@@ -140,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:
             facts.extend(extract_prospectus_market_facts(pages, document_name, args.entity_key, scope))
             facts.extend(extract_prospectus_revolving_purchase_fact(pages, document_name, args.entity_key, scope))
             facts.extend(extract_prospectus_actual_financing_entity_facts(pages, document_name, args.entity_key, scope))
+            facts.extend(extract_cashflow_collection_table_facts(pages, document_name, args.entity_key, scope))
             if args.association_facts:
                 try:
                     association_facts = _load_facts(args.association_facts)
@@ -259,6 +261,7 @@ def _extract_folder_locked(args: argparse.Namespace, input_dir: Path, output_pat
                 "prospectus": [
                     ((2, 3), None), ((16, 16), extract_prospectus_actual_financing_entity_facts),
                     ((90, 90), extract_prospectus_revolving_purchase_fact), ((120, 121), extract_prospectus_initial_face_value_facts),
+                    ((112, 113), extract_cashflow_collection_table_facts),
                 ],
             }[role]
             document["parser"] = parser_id

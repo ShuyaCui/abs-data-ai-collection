@@ -1,4 +1,4 @@
-# Thirteen-field vertical-slice progress — 2026-08-22
+# Twelve-field MVP-v0 progress — 2026-08-23
 
 This is a development coverage matrix, not a frozen gold set. “CLI verified” means the real sample passed secure intake, parsing, fact persistence and evidence emission.
 
@@ -11,21 +11,18 @@ This is a development coverage matrix, not a frozen gold set. “CLI verified”
 | 7 | `maturity_date` | CLI verified | OCR issuance-result announcement, tranche tables |
 | 12 | `tranche_issue_amount` | CLI verified | OCR issuance-result announcement, actual issuance amounts |
 | 14 | `tranche_current_balance` | CLI verified | fourth trustee report: page 6 code/balance row, effective 2026-08-24 payment date on page 5 |
-| 15 | `initial_pool_outstanding_principal_interest_fees` | function-level only | native CCXI report; secure CLI quarantines its `/URI` action |
+| 15 | `initial_pool_outstanding_principal_interest_fees` | CLI verified | native CCXI report p4; inert `https` annotation admitted without permitting chained or executable actions |
 | 19 | `first_interest_payment_date` | CLI verified | issuance prospectus p2 contractual first payment date, projected through explicit OCR tranche associations |
 | 25 | `latest_report_date` | CLI verified | fourth trustee report, page 1 |
 | 35 | `npl_trustee_recovery_cash` | CLI verified | fourth trustee report, pages 7 inputs and versioned derivation |
-| 39 | `cashflow_collection_table` | pending | native-x86 PP-Structure table/cell-coordinate preflight remains open |
+| 39 | `cashflow_collection_table` | BLOCKED | code/fixture contract covers cells, 37 monthly rows, disclosed total and rounding tolerance; native-x86 PP-Structure preflight remains open |
 | 40 | `unit_remaining_face_value` | function-level verified | actual issuance amount + prospectus p120/p121 initial face value + fourth trustee-report balance, effective 2026-08-24 |
 
 ## Current score
 
-- CLI verified: 10/13.
-- Function-level only: 2/13.
-- Pending: 1/13.
-- Secure product rating-report route: blocked only by a policy decision on quarantined `/URI` links; no action is executed and no bypass exists.
+- CLI verified: 11/12.
+- Blocked by native-x86 runtime validation: 1/12.
 
 ## Next non-model work
 
-1. Decide whether a quarantined PDF with an allowlisted `https`/`http` URI may be sanitized into a derived, hash-linked parsing copy, or must remain rejected.
-2. On native x86, validate table/cell coordinates for the PP-Structure container before emitting field 39.
+1. On native x86, validate PP-Structure table/cell coordinates for p112–113 before emitting Field 39 for the real product bundle.

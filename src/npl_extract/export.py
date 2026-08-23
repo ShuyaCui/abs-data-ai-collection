@@ -16,7 +16,8 @@ def export_facts(template: Path, facts: list[ExtractionFact], output: Path) -> N
     template_sheet = workbook.active
     grouped = defaultdict(list)
     for fact in facts:
-        grouped[fact.entity_key].append(fact)
+        if fact.field_id != "cashflow_collection_table":
+            grouped[fact.entity_key].append(fact)
     contracts = load_field_contracts()
     used_names = set()
     sheets = []
@@ -38,6 +39,7 @@ def export_facts(template: Path, facts: list[ExtractionFact], output: Path) -> N
             cell.font = Font(color="0000FF")
     if not grouped:
         template_sheet.title = "未分配"
+    _append_cashflow_sheet(workbook, [fact for fact in facts if fact.field_id == "cashflow_collection_table"])
     if "证据" in workbook.sheetnames:
         del workbook["证据"]
     evidence_sheet = workbook.create_sheet("证据")
@@ -72,7 +74,28 @@ def _sheet_name(entity_key: str, used_names: set[str]) -> str:
     return name
 
 
-def _export_value(value: str | bool | list[str] | None) -> str | None:
+def _append_cashflow_sheet(workbook, facts: list[ExtractionFact]) -> None:
+    if not facts:
+        return
+    sheet = workbook.create_sheet("现金流归集表")
+    sheet.append(["期数", "预计回收金额（万元）", "预计回收金额占比（%）", "报告名", "页码", "证据 ID"])
+    for fact in sorted(facts, key=lambda item: item.entity_key):
+        if fact.status not in {FactStatus.DISCLOSED, FactStatus.DERIVED} or not isinstance(fact.value, dict) or not fact.evidence:
+            continue
+        evidence = fact.evidence[0]
+        sheet.append(
+            [
+                fact.value["period"],
+                fact.value["expected_recovery_amount_10k_cny"],
+                fact.value["expected_recovery_amount_ratio_percent"],
+                evidence.document_name,
+                evidence.physical_page,
+                ",".join(item.evidence_id for item in fact.evidence),
+            ]
+        )
+
+
+def _export_value(value: str | bool | list[str] | dict[str, str] | None) -> str | None:
     if isinstance(value, bool):
         return str(value).lower()
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":")) if isinstance(value, list) else value
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")) if isinstance(value, (list, dict)) else value

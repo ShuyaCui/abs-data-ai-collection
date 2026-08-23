@@ -14,7 +14,7 @@ from npl_extract.parsers import PageContent, route_page
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_FILES = ("manifest.json", "page-quality.jsonl", "blocks.jsonl", "tables.jsonl")
-_PIPELINE_VERSION = "v3"
+_PIPELINE_VERSION = "v4"
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,7 @@ def persist_page_artifacts(
         run_dir.mkdir(parents=True, exist_ok=True)
         diagnostics = []
         blocks = []
+        tables = []
         for page in pages:
             route = route_page(page)
             native = page.native_text
@@ -73,9 +74,10 @@ def persist_page_artifacts(
                 }
             )
             blocks.extend(asdict(block) for block in page.blocks)
+            tables.extend(asdict(table) for table in page.tables)
         _atomic_write(run_dir / "page-quality.jsonl", "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in diagnostics))
         _atomic_write(run_dir / "blocks.jsonl", "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in blocks))
-        _atomic_write(run_dir / "tables.jsonl", "")
+        _atomic_write(run_dir / "tables.jsonl", "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in tables))
         _atomic_write(run_dir / "manifest.json", json.dumps({"document_sha256": document_sha256, "pipeline_version": _PIPELINE_VERSION, "scope": scope, "parser_identity": parser_identity}, ensure_ascii=False))
         return PersistedArtifacts(run_dir, reused=False)
 

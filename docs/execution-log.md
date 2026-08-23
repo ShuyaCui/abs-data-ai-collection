@@ -6,6 +6,12 @@
 - Routed this one native 中诚信国际 rating-report page through the existing folder batch. Real result: `initial_pool_outstanding_principal_interest_fees=3142587200` CNY, source SHA-256 `797b1…24b744`, p4 evidence `p004:b017` and `p004:b019`, persisted fact artifact and batch Excel/JSONL/manifest. Gate 1 is closed.
 - Tests: intake policy regression, folder routing regression and existing balance extraction passed (`12` focused tests). Independent review found and closed the chained-action regression. Remaining MVP blockers: Field 39 native-x86 table/cell validation, 12-field batch, one live Harness→model path, human review and final acceptance.
 
+## 2026-08-23 — MVP-v0 Gate 2: Field 39 code contract ready; native-x86 gate open
+
+- Added the minimal PP-Structure cell artifact contract, Field 39 monthly-row plus disclosed-total extraction, calculated rounding tolerance, dedicated Excel table sheet, and table-cell Harness retrieval/validation. The v4 artifact identity rebuilds stale v3 empty-table artifacts.
+- Real prospectus p112–113 native parsing correctly emits no Field 39 candidate without table-cell coordinates; no native text is misrepresented as a cell.
+- Focused regression plus full offline suite: 155 passed, 1 skipped. Native x86 table/cell validation remains the only Field 39 blocker; exact command is in `docs/evaluations/2026-08-23-cashflow-table-contract.md`.
+
 ## 2026-08-21 — MVP foundation
 
 - Added a Python package, local virtual environment configuration, and offline tests.

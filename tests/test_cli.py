@@ -9,7 +9,7 @@ from openpyxl import Workbook, load_workbook
 from pypdf import PdfWriter
 
 from npl_extract.cli import main
-from npl_extract.parsers import Block, PageContent
+from npl_extract.parsers import Block, PageContent, Table, TableCell
 
 
 def test_inspect_command_emits_machine_readable_result(tmp_path: Path, capsys) -> None:
@@ -128,6 +128,40 @@ def test_extract_folder_routes_ccxi_rating_report_pool_balance(tmp_path: Path, c
     assert [(fact["field_id"], fact["value"]) for fact in facts] == [
         ("initial_pool_outstanding_principal_interest_fees", "3142587200")
     ]
+
+
+def test_extract_folder_persists_cashflow_table_rows_from_coordinate_cells(tmp_path: Path, capsys, monkeypatch) -> None:
+    source = tmp_path / "臻粹不良资产支持证券发行说明书.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    content = BytesIO()
+    writer.write(content)
+    source.write_bytes(content.getvalue())
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+    table = Table("p112:t001", 112, [
+        TableCell("p112:t001:r000:c000", 112, "p112:t001", 0, 0, "期数", [0, 0, 1, 1]),
+        TableCell("p112:t001:r000:c001", 112, "p112:t001", 0, 1, "预计回收金额（万元）", [1, 0, 2, 1]),
+        TableCell("p112:t001:r000:c002", 112, "p112:t001", 0, 2, "预计回收金额占比（%）", [2, 0, 3, 1]),
+        TableCell("p112:t001:r001:c000", 112, "p112:t001", 1, 0, "2026 年 1 月", [0, 1, 1, 2]),
+        TableCell("p112:t001:r001:c001", 112, "p112:t001", 1, 1, "160.70", [1, 1, 2, 2]),
+        TableCell("p112:t001:r001:c002", 112, "p112:t001", 1, 2, "0.65", [2, 1, 3, 2]),
+        TableCell("p112:t001:r002:c000", 112, "p112:t001", 2, 0, "合计", [0, 2, 1, 3]),
+        TableCell("p112:t001:r002:c001", 112, "p112:t001", 2, 1, "160.70", [1, 2, 2, 3]),
+        TableCell("p112:t001:r002:c002", 112, "p112:t001", 2, 2, "0.65", [2, 2, 3, 3]),
+    ])
+    monkeypatch.setattr("npl_extract.cli.parse_native_pdf_isolated", lambda *args, **kwargs: [PageContent(112, "现金流归集表", tables=[table])])
+
+    exit_code = main([
+        "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "臻粹不良资产", "--template", str(template),
+        "--output", str(output), "--runs-dir", str(tmp_path / "runs"),
+    ])
+
+    facts = [json.loads(line) for line in output.with_suffix(".jsonl").read_text().splitlines()]
+    assert exit_code == 0
+    assert [fact["entity_key"] for fact in facts] == ["cashflow_row:test:2026-01", "cashflow_row:test:total"]
+    assert load_workbook(output)["现金流归集表"]["A2"].value == "2026-01"
 
 
 def test_extract_folder_refuses_ambiguous_duplicate_document_roles(tmp_path: Path, capsys) -> None:

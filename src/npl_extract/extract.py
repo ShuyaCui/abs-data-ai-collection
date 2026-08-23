@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 from npl_extract.contracts import EvidenceRef, ExtractionFact, FactInput, FactStatus
-from npl_extract.parsers import PageContent
+from npl_extract.parsers import PageContent, TableCell
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,9 @@ _PROSPECTUS_SPONSOR = re.compile(r"发起机构/贷款服务机构：([^（(。�
 _PROSPECTUS_RATING_ROW = re.compile(r"^(优先档|次级档)\s+.+\s+(无评级|[A-Za-z][A-Za-z0-9+.-]*(?:/[A-Za-z][A-Za-z0-9+.-]*)?)\s*$")
 _PROSPECTUS_BASIC_FEATURES = re.compile(r"^(?:\d+\.)?[“\"]?(优先档|次级档)资产支持证券[”\"]?的基本特征[：:]?$")
 _PROSPECTUS_INITIAL_FACE_VALUE = re.compile(r"^（2）面值：每张“(优先档|次级档)资产支持证券”的面值为人民币(\d+(?:\.\d+)?)元。$")
+_CASHFLOW_PERIOD = re.compile(r"^(\d{4})\s*年\s*(\d{1,2})\s*月$")
+_CASHFLOW_AMOUNT = re.compile(r"^[\d,]+(?:\.\d+)?$")
+_CASHFLOW_HEADERS = ("期数", "预计回收金额（万元）", "预计回收金额占比（%）")
 
 
 def derive_npl_recovery_cash(
@@ -799,11 +802,137 @@ def extract_rating_report_facts(
     ]
 
 
+def extract_cashflow_collection_table_facts(
+    pages: list[PageContent], document_name: str, product_key: str, artifact_scope: str
+) -> list[ExtractionFact]:
+    """Extract monthly cash-flow rows only from coordinate-bearing table cells."""
+    if "发行说明书" not in document_name or not product_key.startswith("product:"):
+        return []
+    rows: list[tuple[str, list[TableCell]]] = []
+    total: list[TableCell] | None = None
+    for page in pages:
+        for table in page.tables:
+            grouped: dict[int, dict[int, TableCell]] = {}
+            for cell in table.cells:
+                grouped.setdefault(cell.row, {})[cell.column] = cell
+            header_row = next(
+                (
+                    row
+                    for row, cells in grouped.items()
+                    if tuple(_compact(cells.get(column).exact_text) if cells.get(column) else "" for column in range(3)) == _CASHFLOW_HEADERS
+                ),
+                None,
+            )
+            if header_row is None:
+                continue
+            for row, cells in sorted(grouped.items()):
+                if row <= header_row:
+                    continue
+                row_cells = [cells.get(column) for column in range(3)]
+                if row_cells[0] is not None and _compact(row_cells[0].exact_text) == "合计":
+                    if any(cell is None or cell.bbox is None or len(cell.bbox) != 4 for cell in row_cells):
+                        return []
+                    header_cells = [grouped[header_row][column] for column in range(3)]
+                    if any(cell.bbox is None or len(cell.bbox) != 4 for cell in header_cells):
+                        return []
+                    if total is not None:
+                        return []
+                    total = [*header_cells, *row_cells]
+                    continue
+                if any(cell is None or cell.bbox is None or len(cell.bbox) != 4 for cell in row_cells):
+                    return []
+                period_match = _CASHFLOW_PERIOD.fullmatch(_compact(row_cells[0].exact_text))
+                if period_match is None or not _CASHFLOW_AMOUNT.fullmatch(_compact(row_cells[1].exact_text)) or not _CASHFLOW_AMOUNT.fullmatch(_compact(row_cells[2].exact_text)):
+                    return []
+                period = f"{period_match.group(1)}-{int(period_match.group(2)):02d}"
+                header_cells = [grouped[header_row][column] for column in range(3)]
+                if any(cell.bbox is None or len(cell.bbox) != 4 for cell in header_cells):
+                    return []
+                rows.append((period, [*header_cells, *row_cells]))
+    if not rows or total is None or len({period for period, _ in rows}) != len(rows):
+        return []
+    facts = []
+    product = product_key.removeprefix("product:")
+    for period, cells in rows:
+        values = [cell.exact_text for cell in cells[3:]]
+        facts.append(
+            ExtractionFact(
+                fact_id=f"disclosed:cashflow-collection:{cells[3].table_id}:{cells[3].row}",
+                field_id="cashflow_collection_table",
+                entity_key=f"cashflow_row:{product}:{period}",
+                status=FactStatus.DISCLOSED,
+                value={
+                    "period": period,
+                    "expected_recovery_amount_10k_cny": _compact(values[1]),
+                    "expected_recovery_amount_ratio_percent": _compact(values[2]),
+                },
+                evidence=[
+                    _evidence(
+                        cell.evidence_id,
+                        artifact_scope,
+                        document_name,
+                        cell.physical_page,
+                        f"资产池预计整体回收分布情况/{period}/{_CASHFLOW_HEADERS[index % 3]}",
+                        cell.exact_text,
+                    )
+                    for index, cell in enumerate(cells)
+                ],
+            )
+        )
+    total_values = [_compact(cell.exact_text) for cell in total[3:]]
+    computed_amount = sum((Decimal(_compact(cells[4].exact_text).replace(",", "")) for _, cells in rows), Decimal())
+    computed_ratio = sum((Decimal(_compact(cells[5].exact_text).replace(",", "")) for _, cells in rows), Decimal())
+    disclosed_amount = Decimal(total_values[1].replace(",", ""))
+    disclosed_ratio = Decimal(total_values[2].replace(",", ""))
+    amount_tolerance = _rounding_tolerance([cells[4].exact_text for _, cells in rows])
+    ratio_tolerance = _rounding_tolerance([cells[5].exact_text for _, cells in rows])
+    if abs(computed_amount - disclosed_amount) > amount_tolerance or abs(computed_ratio - disclosed_ratio) > ratio_tolerance:
+        return []
+    facts.append(
+        ExtractionFact(
+            fact_id=f"disclosed:cashflow-collection:{total[3].table_id}:{total[3].row}",
+            field_id="cashflow_collection_table",
+            entity_key=f"cashflow_row:{product}:total",
+            status=FactStatus.DISCLOSED,
+            value={
+                "period": "total",
+                "expected_recovery_amount_10k_cny": total_values[1],
+                "expected_recovery_amount_ratio_percent": total_values[2],
+                "computed_expected_recovery_amount_10k_cny": format(computed_amount, "f"),
+                "computed_expected_recovery_amount_ratio_percent": format(computed_ratio, "f"),
+                "amount_tolerance_10k_cny": format(amount_tolerance.normalize(), "f"),
+                "ratio_tolerance_percent": format(ratio_tolerance.normalize(), "f"),
+            },
+            evidence=[
+                _evidence(
+                    cell.evidence_id,
+                    artifact_scope,
+                    document_name,
+                    cell.physical_page,
+                    f"资产池预计整体回收分布情况/合计/{_CASHFLOW_HEADERS[index % 3]}",
+                    cell.exact_text,
+                )
+                for index, cell in enumerate(total)
+            ],
+        )
+    )
+    return facts
+
+
 def _product_name(document_name: str, suffix: str) -> str:
     stem = Path(document_name).stem
     if not stem.endswith(suffix):
         return ""
     return re.sub(r"\s+", "", stem.removesuffix(suffix))
+
+
+def _compact(value: str) -> str:
+    return re.sub(r"\s+", "", value)
+
+
+def _rounding_tolerance(values: list[str]) -> Decimal:
+    decimals = max((len(_compact(value).partition(".")[2]) for value in values), default=0)
+    return Decimal(len(values)) * Decimal("0.5") * Decimal(10) ** -decimals
 
 
 def _resolve_tranche_associations(association_facts: list[ExtractionFact], product_name: str) -> dict[str, ExtractionFact] | None:
