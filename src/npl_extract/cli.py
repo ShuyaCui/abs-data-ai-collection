@@ -11,7 +11,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from npl_extract.intake import inspect_pdf
-from npl_extract.contracts import ExtractionFact, ReviewAction
+from npl_extract.contracts import ExtractionFact, ReviewAction, ReviewDecision
 from npl_extract.extract import (
     extract_issuance_announcement_facts,
     extract_issuance_result_ocr_facts,
@@ -100,8 +100,9 @@ def main(argv: list[str] | None = None) -> int:
             corrections = _load_review_facts(args.document_sha256, [args.corrected_fact], args.runs_dir) if args.corrected_fact else []
             if len(corrections) > 1:
                 raise ValueError("review accepts at most one corrected fact")
+            candidate = _with_reviewed_derived_inputs(candidates[0], args.document_sha256, args.runs_dir)
             decision = review_fact(
-                candidates[0],
+                candidate,
                 action=ReviewAction(args.action),
                 decision_id=args.decision_id,
                 reviewer_id=args.reviewer_id,
@@ -431,6 +432,19 @@ def _load_review_facts(document_sha256: str, paths: list[Path], runs_dir: Path) 
             raise ValueError("review fact artifact is not content-addressed")
         facts.extend(ExtractionFact.model_validate(json.loads(line)) for line in content.decode("utf-8").splitlines() if line.strip())
     return facts
+
+
+def _with_reviewed_derived_inputs(candidate: ExtractionFact, document_sha256: str, runs_dir: Path) -> ExtractionFact:
+    if not candidate.derived_inputs:
+        return candidate
+    accepted = set()
+    for path in (runs_dir / document_sha256 / "reviews").glob("*.json"):
+        decision = ReviewDecision.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        if decision.action is ReviewAction.ACCEPT:
+            accepted.add(decision.candidate_fact_id)
+    return candidate.model_copy(
+        update={"derived_inputs": [item.model_copy(update={"confirmed": item.fact_id in accepted}) for item in candidate.derived_inputs]}
+    )
 
 
 def _page_range(value: str) -> tuple[int, int]:

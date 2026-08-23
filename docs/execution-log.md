@@ -18,6 +18,11 @@
 - The eleven currently runnable target fields have candidate facts with nonempty document/page/evidence ID/exact-text evidence; the scan found zero non-null facts without evidence. Field 39 is explicitly `BLOCKED: PPSTRUCTURE_NATIVE_X86_PREFLIGHT_REQUIRED` in the batch manifest, not silently absent.
 - Gate 3 is complete for the current environment. The only extraction blocker carried forward is native-x86 Field 39 validation.
 
+## 2026-08-23 — MVP-v0 Gates 4–5: live-model block and review readiness
+
+- Fixed DSH runtime identity verifies, but a real headless session still stops at macOS Node watcher `EMFILE` even from a minimal symlink-only runner; no model credential is configured for DeepSeek, Qwen, Kimi or GLM. No synthetic “model success” was recorded. Gate 4 remains blocked by these external prerequisites.
+- Created the real-bundle review queue and verified the existing CLI can accept a derived fact only after immutable `accept` decisions exist for its disclosed inputs. No business decision was written. Gate 5 is ready for the business data owner; see `docs/evaluations/2026-08-23-mvp-v0-review-queue.md`.
+
 ## 2026-08-21 — MVP foundation
 
 - Added a Python package, local virtual environment configuration, and offline tests.

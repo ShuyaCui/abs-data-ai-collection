@@ -799,6 +799,33 @@ def test_review_command_appends_an_accepted_fact_decision(tmp_path: Path, capsys
     assert (runs_dir / document_sha256 / "reviews" / "review-001.json").is_file()
 
 
+def test_review_command_accepts_a_derived_fact_after_its_inputs_are_reviewed(tmp_path: Path, capsys) -> None:
+    document_sha256 = "c" * 64
+    runs_dir = tmp_path / "runs"
+    evidence = {"evidence_id": "p007:b001", "artifact_scope": "pypdf-pages-1-7", "document_name": "受托机构报告.pdf", "physical_page": 7, "locator": "回收", "exact_text": "30,466,642.99"}
+    facts = [
+        {"fact_id": "in-progress", "field_id": "npl_recovery_in_progress_cumulative", "entity_key": "report:test", "status": "disclosed", "value": "30466642.99", "evidence": [evidence]},
+        {"fact_id": "completed", "field_id": "npl_recovery_completed_cumulative", "entity_key": "report:test", "status": "disclosed", "value": "29941313.75", "evidence": [evidence]},
+        {"fact_id": "derived-recovery", "field_id": "npl_trustee_recovery_cash", "entity_key": "report:test", "status": "derived", "value": "0.6040795674", "evidence": [evidence], "rule_version": "npl-recovery-cash-v1", "derived_inputs": [{"fact_id": "in-progress", "confirmed": False}, {"fact_id": "completed", "confirmed": False}]},
+    ]
+    content = "".join(json.dumps(fact) + "\n" for fact in facts)
+    candidates = runs_dir / document_sha256 / "facts" / f"{sha256(content.encode()).hexdigest()}.jsonl"
+    candidates.parent.mkdir(parents=True)
+    candidates.write_text(content)
+
+    for fact_id, decision_id in (("in-progress", "review-input-1"), ("completed", "review-input-2"), ("derived-recovery", "review-derived")):
+        exit_code = main([
+            "review", "--document-sha256", document_sha256, "--facts", str(candidates), "--fact-id", fact_id,
+            "--action", "accept", "--decision-id", decision_id, "--reviewer-id", "business-owner:alice",
+            "--reason-code", "VALUE_AND_EVIDENCE_CONFIRMED", "--runs-dir", str(runs_dir),
+        ])
+        assert exit_code == 0, capsys.readouterr().out
+        capsys.readouterr()
+
+    decision = json.loads((runs_dir / document_sha256 / "reviews" / "review-derived.json").read_text())
+    assert all(item["confirmed"] for item in decision["resolved_fact"]["derived_inputs"])
+
+
 def test_review_command_rejects_a_candidate_from_another_document(tmp_path: Path, capsys) -> None:
     runs_dir = tmp_path / "runs"
     candidates = runs_dir / ("b" * 64) / "facts" / f"{sha256(b'').hexdigest()}.jsonl"
