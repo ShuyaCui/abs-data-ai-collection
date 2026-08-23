@@ -16,7 +16,7 @@
 
 - Re-ran `extract-folder` from the ten source PDFs after Field 15 admission: 33 candidate/supporting facts, candidate JSONL, Excel evidence workbook and manifest were written under `runs/sample/mvp-v0-candidate.*`.
 - The eleven currently runnable target fields have candidate facts with nonempty document/page/evidence ID/exact-text evidence; the scan found zero non-null facts without evidence. Field 39 is explicitly `BLOCKED: PPSTRUCTURE_NATIVE_X86_PREFLIGHT_REQUIRED` in the batch manifest, not silently absent.
-- Gate 3 is complete for the current environment. The only extraction blocker carried forward is native-x86 Field 39 validation.
+- A second independently named folder run produced byte-identical candidate JSONL, the same batch SHA-256 `47d5d927…b3a7c6`, and 33 facts. Gate 3 is complete for the current environment. The only extraction blocker carried forward is native-x86 Field 39 validation.
 
 ## 2026-08-23 — MVP-v0 Gates 4–5: live-model block and review readiness
 
