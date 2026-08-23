@@ -33,7 +33,8 @@ docker run --rm --platform linux/amd64 --network none --read-only \
   --mount "type=bind,src=$staging,dst=/output" \
   npl-ppstructure:local "/input/$name"
 
-for result in "$staging"/*.json; do
+for result in "$staging"/*.json "$staging"/tables.jsonl; do
+  test -f "$result" || continue
   target="$resolved_output/$(basename "$result")"
   test ! -e "$target" || { echo "refusing to overwrite $target" >&2; exit 1; }
   cp "$result" "$target"

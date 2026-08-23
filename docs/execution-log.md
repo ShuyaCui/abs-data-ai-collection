@@ -10,7 +10,7 @@
 
 - Added the minimal PP-Structure cell artifact contract, Field 39 monthly-row plus disclosed-total extraction, calculated rounding tolerance, dedicated Excel table sheet, and table-cell Harness retrieval/validation. The v4 artifact identity rebuilds stale v3 empty-table artifacts.
 - Real prospectus p112–113 native parsing correctly emits no Field 39 candidate without table-cell coordinates; no native text is misrepresented as a cell.
-- Focused regression plus full offline suite: 155 passed, 1 skipped. Native x86 table/cell validation remains the only Field 39 blocker; exact command is in `docs/evaluations/2026-08-23-cashflow-table-contract.md`.
+- Focused regression plus full offline suite: 156 passed, 1 skipped. Native x86 table/cell validation remains the only Field 39 blocker; exact command is in `docs/evaluations/2026-08-23-cashflow-table-contract.md`.
 
 ## 2026-08-21 — MVP foundation
 
