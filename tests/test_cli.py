@@ -10,6 +10,7 @@ from openpyxl import Workbook, load_workbook
 from pypdf import PdfWriter
 
 from npl_extract.cli import main
+from npl_extract.contracts import ExtractionFact, FactStatus
 from npl_extract.parsers import Block, PageContent, Table, TableCell
 
 
@@ -926,3 +927,64 @@ def test_review_command_rejects_a_tampered_candidate_artifact(tmp_path: Path, ca
 
     assert exit_code == 2
     assert "content-addressed" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_extract_folder_routes_recovery_pages_after_rating_and_preserves_non_conflicting_prospectus_facts(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    prospectus = tmp_path / "臻粹不良资产支持证券发行说明书.pdf"
+    rating_report = tmp_path / "臻粹不良资产支持证券信用评级报告及跟踪评级安排(中诚信国际).pdf"
+    for path in (prospectus, rating_report):
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        content = BytesIO()
+        writer.write(content)
+        path.write_bytes(content.getvalue())
+    template = tmp_path / "template.xlsx"
+    Workbook().save(template)
+    output = tmp_path.parent / "candidate.xlsx"
+    calls = []
+
+    def fact(field_id: str, value: str | list[str], source: str) -> ExtractionFact:
+        return ExtractionFact(
+            fact_id=f"{source}:{field_id}", field_id=field_id, entity_key="product:test", status=FactStatus.DISCLOSED,
+            value=value, evidence=[{
+                "evidence_id": f"{source}:b001", "artifact_scope": "pypdf-test", "document_name": source,
+                "physical_page": 1, "locator": "test", "exact_text": "test",
+            }],
+        )
+
+    def parse(*args, **kwargs):
+        calls.append((Path(args[0]).name, kwargs["parser"], kwargs["page_range"]))
+        return [PageContent(kwargs["page_range"][0], "", [])]
+
+    monkeypatch.setattr("npl_extract.cli.parse_native_pdf_isolated", parse)
+    monkeypatch.setattr(
+        "npl_extract.cli.extract_rating_report_facts",
+        lambda *args: [fact("chinabond_predicted_recovery_rate", "8.00", "rating")],
+    )
+    monkeypatch.setattr(
+        "npl_extract.cli.extract_prospectus_recovery_prediction_facts",
+        lambda *args: [
+            fact("chinabond_predicted_recovery_rate", "7.90", "prospectus"),
+            fact("chinabond_predicted_recovery_amount", "2.482766", "prospectus"),
+            fact("issuance_cashflow_forecast_agency", ["中债资信", "中诚信国际"], "prospectus"),
+        ],
+    )
+
+    exit_code = main([
+        "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "臻粹不良资产", "--template", str(template),
+        "--output", str(output), "--runs-dir", str(tmp_path / "runs"),
+    ])
+
+    facts = [json.loads(line) for line in output.with_suffix(".jsonl").read_text().splitlines()]
+    assert exit_code == 0, capsys.readouterr().out
+    assert [(parser, page_range) for _, parser, page_range in calls if page_range in {(4, 4), (102, 104)}] == [
+        ("pypdf", (4, 4)),
+        ("pypdf", (102, 104)),
+    ]
+    assert {item["field_id"]: item["value"] for item in facts} == {
+        "chinabond_predicted_recovery_rate": "8.00",
+        "chinabond_predicted_recovery_amount": "2.482766",
+        "issuance_cashflow_forecast_agency": ["中债资信", "中诚信国际"],
+    }

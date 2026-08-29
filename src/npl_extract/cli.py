@@ -18,6 +18,7 @@ from npl_extract.extract import (
     extract_prospectus_issue_amount_facts,
     extract_prospectus_initial_face_value_facts,
     extract_prospectus_market_facts,
+    extract_prospectus_recovery_prediction_facts,
     extract_prospectus_actual_financing_entity_facts,
     extract_prospectus_revolving_purchase_fact,
     extract_prospectus_first_interest_payment_facts,
@@ -255,7 +256,8 @@ def _extract_folder_locked(args: argparse.Namespace, input_dir: Path, output_pat
                     document["status"] = "superseded"
     facts: list[ExtractionFact] = []
     associations: list[ExtractionFact] = []
-    for role in ("issuance_announcement", "issuance_result", "prospectus", "rating_report", "trustee"):
+    rating_prediction_fields: set[str] = set()
+    for role in ("issuance_announcement", "issuance_result", "rating_report", "prospectus", "trustee"):
         queued = [document for document in documents if document.get("role") == role and document["status"] == "queued"]
         if len(queued) != 1:
             continue
@@ -274,6 +276,7 @@ def _extract_folder_locked(args: argparse.Namespace, input_dir: Path, output_pat
                     ((2, 3), None), ((16, 16), extract_prospectus_actual_financing_entity_facts),
                     ((90, 90), extract_prospectus_revolving_purchase_fact), ((120, 121), extract_prospectus_initial_face_value_facts),
                     ((112, 113), extract_cashflow_collection_table_facts),
+                    ((102, 104), extract_prospectus_recovery_prediction_facts),
                 ],
             }[role]
             document["parser"] = "ppstructure+pypdf" if role == "prospectus" else parser_identity("docling-ocr" if role == "issuance_result" else "pypdf")
@@ -299,9 +302,20 @@ def _extract_folder_locked(args: argparse.Namespace, input_dir: Path, output_pat
                     slice_facts = extractor(pages, path.name, associations, scope)
                 else:
                     slice_facts = extractor(pages, path.name, entity_key, scope)
+                if role == "prospectus":
+                    slice_facts = [
+                        fact for fact in slice_facts
+                        if fact.field_id not in rating_prediction_fields
+                    ]
                 artifacts = persist_page_artifacts(document["source_sha256"], pages, args.runs_dir, scope=scope, parser_identity=parser_id)
                 document["artifact_scopes"].append(str(artifacts.run_dir))
                 extracted.extend(slice_facts)
+            if role == "rating_report":
+                rating_prediction_fields.update(
+                    fact.field_id
+                    for fact in extracted
+                    if fact.field_id in {"chinabond_predicted_recovery_rate", "chinabond_predicted_recovery_amount"}
+                )
             if extracted:
                 persisted = persist_facts(document["source_sha256"], extracted, args.runs_dir)
                 document["facts_artifact"] = str(persisted.path)
