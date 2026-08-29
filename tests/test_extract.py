@@ -4,12 +4,13 @@ from datetime import date
 
 import pytest
 
-from npl_extract.contracts import EvidenceRef, ExtractionFact, FactStatus
+from npl_extract.contracts import EvidenceRef, ExtractionFact, FactStatus, load_field_contracts
 from npl_extract.extract import (
     RecoveryComponent,
     extract_issuance_result_ocr_facts,
     extract_prospectus_issue_amount_facts,
     extract_prospectus_market_facts,
+    extract_prospectus_recovery_prediction_facts,
     extract_prospectus_actual_financing_entity_facts,
     extract_prospectus_revolving_purchase_fact,
     extract_prospectus_issue_rating_facts,
@@ -219,6 +220,110 @@ def test_extracts_initial_face_values_from_matching_prospectus_feature_sections(
 
     assert {(fact.entity_key, fact.value) for fact in facts} == {("security:2689075", "100"), ("security:2689076", "100")}
     assert all(fact.field_id == "tranche_initial_face_value" and len(fact.evidence) == 3 for fact in facts)
+
+
+def recovery_pages(*, adoption: bool = True, agency_binding: bool = True, duplicate: tuple[int, str] | None = None) -> list[PageContent]:
+    blocks_102 = [
+        Block(
+            "p102:b001",
+            102,
+            "中债资信和中诚信国际均对本交易资产池未来回收情况进行了预测。" if agency_binding else "中债资信和中诚信国际在本说明书中出现。",
+            None,
+        ),
+    ]
+    blocks_103 = [Block("p103:b001", 103, "采用中债资信预测的回收情况。", None)] if adoption else []
+    blocks_104 = [Block("p104:b001", 104, "中债资信 24,827.66 万元 7.90%", None)]
+    if duplicate:
+        page, text = duplicate
+        (blocks_102 if page == 102 else blocks_103 if page == 103 else blocks_104).append(
+            Block(f"p{page}:b099", page, text, None)
+        )
+    return [PageContent(102, "", blocks_102), PageContent(103, "", blocks_103), PageContent(104, "", blocks_104)]
+
+
+def test_extracts_bounded_native_prospectus_recovery_prediction_facts() -> None:
+    facts = extract_prospectus_recovery_prediction_facts(
+        recovery_pages(), "臻粹2026年第二期不良资产支持证券发行说明书.pdf", "product:臻粹2026-2", "pypdf-pages-102-104"
+    )
+
+    assert [(fact.field_id, fact.entity_key, fact.status, fact.value) for fact in facts] == [
+        ("chinabond_predicted_recovery_rate", "product:臻粹2026-2", FactStatus.DISCLOSED, "7.90"),
+        ("chinabond_predicted_recovery_amount", "product:臻粹2026-2", FactStatus.DISCLOSED, "2.482766"),
+        ("issuance_cashflow_forecast_agency", "product:臻粹2026-2", FactStatus.DISCLOSED, ["中债资信", "中诚信国际"]),
+    ]
+    assert {fact.field_id: load_field_contracts()[fact.field_id].unit for fact in facts} == {
+        "chinabond_predicted_recovery_rate": "PERCENT",
+        "chinabond_predicted_recovery_amount": "CNY_100M",
+        "issuance_cashflow_forecast_agency": None,
+    }
+    assert {fact.field_id: [item.evidence_id for item in fact.evidence] for fact in facts} == {
+        "chinabond_predicted_recovery_rate": ["p102:b001", "p103:b001", "p104:b001"],
+        "chinabond_predicted_recovery_amount": ["p102:b001", "p103:b001", "p104:b001"],
+        "issuance_cashflow_forecast_agency": ["p102:b001"],
+    }
+
+
+def test_recovery_prediction_keeps_agencies_without_adoption_relation() -> None:
+    facts = extract_prospectus_recovery_prediction_facts(
+        recovery_pages(adoption=False), "发行说明书.pdf", "product:臻粹", "pypdf-pages-102-104"
+    )
+
+    assert [(fact.field_id, fact.value) for fact in facts] == [
+        ("issuance_cashflow_forecast_agency", ["中债资信", "中诚信国际"])
+    ]
+
+
+@pytest.mark.parametrize(
+    "duplicate",
+    [
+        (103, "中债资信 24,827.67 万元 7.90%"),
+        (103, "中债资信 24,827.66 亿元 7.90%"),
+        (104, "中债资信 24,827.66 万元 7.90%"),
+    ],
+    ids=["conflicting-amount", "different-unit", "extra-same-structure-row"],
+)
+def test_recovery_prediction_fails_closed_for_ambiguous_chinabond_rows(duplicate: tuple[int, str]) -> None:
+    facts = extract_prospectus_recovery_prediction_facts(
+        recovery_pages(duplicate=duplicate), "发行说明书.pdf", "product:臻粹", "pypdf-pages-102-104"
+    )
+
+    assert [(fact.field_id, fact.value) for fact in facts] == [
+        ("issuance_cashflow_forecast_agency", ["中债资信", "中诚信国际"])
+    ]
+
+
+def test_recovery_prediction_rejects_unbound_agencies() -> None:
+    assert extract_prospectus_recovery_prediction_facts(
+        recovery_pages(agency_binding=False), "发行说明书.pdf", "product:臻粹", "pypdf-pages-102-104"
+    ) == []
+
+
+def test_recovery_prediction_requires_a_product_entity() -> None:
+    assert extract_prospectus_recovery_prediction_facts(
+        recovery_pages(), "发行说明书.pdf", "security:2689075", "pypdf-pages-102-104"
+    ) == []
+
+
+def test_recovery_prediction_adds_same_value_cross_page_evidence() -> None:
+    facts = extract_prospectus_recovery_prediction_facts(
+        recovery_pages(duplicate=(103, "中债资信 24,827.66 万元 7.90%")),
+        "发行说明书.pdf", "product:臻粹", "pypdf-pages-102-104",
+    )
+
+    assert [item.evidence_id for item in facts[0].evidence] == ["p102:b001", "p103:b001", "p103:b099", "p104:b001"]
+    assert [item.evidence_id for item in facts[1].evidence] == ["p102:b001", "p103:b001", "p103:b099", "p104:b001"]
+
+
+@pytest.mark.parametrize(
+    "pages",
+    [
+        [PageContent(104, "", [Block("p104:b001", 104, "中债资信 24,827.66 万元 7.90%", None)], ocr_requested=True)],
+        [PageContent(101, "", [Block("p101:b001", 101, "中债资信和中诚信国际均对本交易资产池未来回收情况进行了预测。", None), Block("p101:b002", 101, "采用中债资信预测的回收情况。", None), Block("p101:b003", 101, "中债资信 24,827.66 万元 7.90%", None)])],
+    ],
+    ids=["ocr", "out-of-range"],
+)
+def test_recovery_prediction_rejects_ocr_and_out_of_range_pages(pages: list[PageContent]) -> None:
+    assert extract_prospectus_recovery_prediction_facts(pages, "发行说明书.pdf", "product:臻粹", "pypdf-pages-102-104") == []
 
 
 def test_extracts_the_normalized_market_and_issuance_method_from_one_unique_prospectus_statement() -> None:
