@@ -3,6 +3,7 @@
 .uv-cache/
 .uv-python/
 .pytest_cache/
+.worktrees/
 node_modules/
 __pycache__/
 *.pyc
