@@ -42,7 +42,7 @@ _CASHFLOW_PERIOD = re.compile(r"^(\d{4})\s*年\s*(\d{1,2})\s*月$")
 _CASHFLOW_AMOUNT = re.compile(r"^[\d,]+(?:\.\d+)?$")
 _CASHFLOW_HEADERS = ("期数", "预计回收金额（万元）", "预计回收金额占比（%）")
 _CHINABOND_RECOVERY_ROW = re.compile(
-    r"中债资信(?:预计)?(?:总)?回收(?:金额|总额)?(?:为|是|：|:)?([\d,]+(?:\.\d+)?)(万元|亿元|元).*?(?:预计)?回收率(?:为|是|：|:)?([\d.]+)([%％])"
+    r"中债资信(?:预计)?(?:总)?回收(?:金额|总额)?(?:为|是|：|:)?([\d,]+(?:\.\d+)?)(万元|亿元|元)(?:(?!中诚信国际).)*?(?:预计)?回收率(?:为|是|：|:)?([\d.]+)([%％])"
     r"|中债资信\s*([\d,]+(?:\.\d+)?)\s*(万元|亿元|元)\s*([\d.]+)\s*([%％])"
 )
 _FORECAST_AGENCY_BINDING = re.compile(r"(中债资信|中诚信国际).{0,20}(中债资信|中诚信国际).{0,40}(?:预测|估值|现金流估计)")
@@ -651,19 +651,24 @@ def extract_prospectus_recovery_prediction_facts(
                 if percent == "%":
                     recovery_candidates.append((page, index, block, amount.replace(",", ""), unit, rate))
     facts = []
-    if len(agency_candidates) == 1:
-        page, _, block, agencies = agency_candidates[0]
+    agency_values = {tuple(agencies) for *_, agencies in agency_candidates}
+    if len(agency_values) == 1:
+        agencies = list(next(iter(agency_values)))
+        agency_evidence = sorted(agency_candidates, key=lambda item: (item[0].physical_page, item[1]))
         facts.append(
             ExtractionFact(
-                fact_id=f"disclosed:issuance-cashflow-forecast-agency:{block.evidence_id}",
+                fact_id=f"disclosed:issuance-cashflow-forecast-agency:{agency_evidence[0][2].evidence_id}",
                 field_id="issuance_cashflow_forecast_agency",
                 entity_key=entity_key,
                 status=FactStatus.DISCLOSED,
                 value=agencies,
-                evidence=[_evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "评级机构现金流预测", block.exact_text)],
+                evidence=[
+                    _evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "评级机构现金流预测", block.exact_text)
+                    for page, _, block, _ in agency_evidence
+                ],
             )
         )
-    if len(agency_candidates) != 1 or len(adoption_candidates) != 1 or not recovery_candidates:
+    if len(agency_values) != 1 or len(adoption_candidates) != 1 or not recovery_candidates:
         return facts
     values = {(amount, unit, rate) for _, _, _, amount, unit, rate in recovery_candidates}
     pages_with_rows = [page.physical_page for page, *_ in recovery_candidates]
@@ -679,7 +684,7 @@ def extract_prospectus_recovery_prediction_facts(
         return facts
     if not amount_value.is_finite() or not rate_value.is_finite():
         return facts
-    evidence_blocks = [agency_candidates[0], adoption_candidates[0], *recovery_candidates]
+    evidence_blocks = [*agency_candidates, adoption_candidates[0], *recovery_candidates]
     evidence = [
         _evidence(block.evidence_id, artifact_scope, document_name, page.physical_page, "评级机构现金流预测/中债资信预测回收情况", block.exact_text)
         for page, _, block, *_ in sorted(evidence_blocks, key=lambda item: (item[0].physical_page, item[1]))

@@ -298,6 +298,32 @@ def test_recovery_prediction_rejects_unbound_agencies() -> None:
     ) == []
 
 
+def test_recovery_prediction_does_not_pair_a_chinabond_amount_with_another_agencys_rate() -> None:
+    pages = recovery_pages(duplicate=(104, "中债资信预计总回收金额为24,827.66万元，中诚信国际预计回收率为7.90%"))
+    pages[2] = PageContent(104, "", [pages[2].blocks[1]])
+
+    facts = extract_prospectus_recovery_prediction_facts(
+        pages, "发行说明书.pdf", "product:臻粹", "pypdf-pages-102-104"
+    )
+
+    assert [(fact.field_id, fact.value) for fact in facts] == [
+        ("issuance_cashflow_forecast_agency", ["中债资信", "中诚信国际"])
+    ]
+
+
+def test_recovery_prediction_deduplicates_repeated_agency_bindings() -> None:
+    facts = extract_prospectus_recovery_prediction_facts(
+        recovery_pages(duplicate=(103, "中债资信和中诚信国际均对本交易资产池未来回收情况进行了预测。")),
+        "发行说明书.pdf",
+        "product:臻粹",
+        "pypdf-pages-102-104",
+    )
+
+    agency_fact = next(fact for fact in facts if fact.field_id == "issuance_cashflow_forecast_agency")
+    assert agency_fact.value == ["中债资信", "中诚信国际"]
+    assert [item.evidence_id for item in agency_fact.evidence] == ["p102:b001", "p103:b099"]
+
+
 def test_recovery_prediction_requires_a_product_entity() -> None:
     assert extract_prospectus_recovery_prediction_facts(
         recovery_pages(), "发行说明书.pdf", "security:2689075", "pypdf-pages-102-104"
