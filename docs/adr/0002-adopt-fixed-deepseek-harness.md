@@ -1,8 +1,16 @@
 # ADR 0002: Adopt a Fixed DeepSeek Harness Release
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-08-21
 - Decision owner: Project owner
+
+## Superseded decision
+
+This exploratory decision is no longer the production default. The current production path is **方案 A：确定性 Python workflow + 按需的一次性 Qwen Semantic Worker + 独立 `ReviewDecision`**; it has no Agent loop or Harness control plane. The durable evidence, fact and review contracts remain unchanged.
+
+Only a frozen validation set and real failure cases may justify reconsidering a bounded multi-round evidence-tool loop (方案 B) or Pi Agent Core. The required evidence is a material quality gain over the one-shot call, measured together with evidence completeness, false fill, P95 latency, token cost and runtime failure rate. See [the current production plan](../2026-08-28-abs-data-ai-collection-feasibility-and-production-plan-complete.md).
+
+The remainder of this ADR is retained as the historical rationale for the former DeepSeek Harness experiment.
 
 ## Context
 
