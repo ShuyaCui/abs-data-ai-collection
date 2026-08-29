@@ -71,6 +71,16 @@ def test_harness_bridge_retrieves_a_table_cell_excerpt(tmp_path: Path) -> None:
     assert response["result"]["evidence"]["exact_text"] == "160.70"
 
 
+def test_harness_bridge_truncates_a_table_cell_excerpt(tmp_path: Path) -> None:
+    scope = tmp_path / SHA256 / "ppstructure-v3-pages-112-113"
+    scope.mkdir(parents=True)
+    (scope / "tables.jsonl").write_text(json.dumps({"table_id": "p112:t001", "physical_page": 112, "cells": [{"evidence_id": "p112:t001:r001:c001", "physical_page": 112, "exact_text": "160.70"}]}) + "\n")
+
+    response = _call(tmp_path, "retrieve_evidence", {"document_sha256": SHA256, "scope": "ppstructure-v3-pages-112-113", "evidence_id": "p112:t001:r001:c001", "max_text_chars": 3})
+
+    assert response["result"]["evidence"] == {"evidence_id": "p112:t001:r001:c001", "physical_page": 112, "exact_text": "160", "truncated": True}
+
+
 def test_harness_bridge_caps_total_fact_evidence_text_per_response() -> None:
     facts = [{"evidence": [{"exact_text": "1234"}, {"exact_text": "5678"}]}]
 
@@ -160,6 +170,14 @@ def test_harness_bridge_rejects_a_model_supplied_fact_payload(tmp_path: Path) ->
 
     with pytest.raises(subprocess.CalledProcessError):
         _call(tmp_path, "validate_facts", {"document_sha256": SHA256, "facts": [fact]})
+
+
+def test_harness_bridge_requests_review_for_a_canonical_fact(tmp_path: Path) -> None:
+    fact_id = _persist_candidate(tmp_path, {"fact_id": "fact:1"})
+
+    response = _call(tmp_path, "request_review", {"document_sha256": SHA256, "fact_id": fact_id})
+
+    assert response == {"operation": "request_review", "status": "review_required", "result": {"candidate_fact_id": fact_id}}
 
 
 def test_harness_bridge_get_page_never_returns_block_text(tmp_path: Path) -> None:

@@ -44,6 +44,29 @@ def test_parse_command_writes_evidence_artifacts(tmp_path: Path) -> None:
     assert list((tmp_path / "runs").glob("*/pypdf-6-16-1-all/manifest.json"))
 
 
+def test_parser_commands_share_the_pypdf_default(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "safe.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    content = BytesIO()
+    writer.write(content)
+    source.write_bytes(content.getvalue())
+    parsers = []
+
+    def parse(*_args, **kwargs):
+        parsers.append(kwargs["parser"])
+        return []
+
+    monkeypatch.setattr("npl_extract.cli.parse_native_pdf_isolated", parse)
+
+    main(["parse", str(source), "--runs-dir", str(tmp_path / "runs")])
+    main(["extract-trustee", str(source), "--entity-key", "report:test", "--runs-dir", str(tmp_path / "runs")])
+    main(["extract", str(source), "--runs-dir", str(tmp_path / "runs")])
+    main(["parse", str(source), "--native-parser", "docling-ocr", "--runs-dir", str(tmp_path / "runs")])
+
+    assert parsers == ["pypdf", "pypdf", "pypdf", "docling-ocr"]
+
+
 def test_review_page_command_writes_an_offline_review_page(tmp_path: Path, capsys) -> None:
     facts = tmp_path / "candidate.jsonl"
     facts.write_text(
