@@ -157,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
             facts.extend(extract_prospectus_revolving_purchase_fact(pages, document_name, args.entity_key, scope))
             facts.extend(extract_prospectus_actual_financing_entity_facts(pages, document_name, args.entity_key, scope))
             facts.extend(extract_cashflow_collection_table_facts(pages, document_name, args.entity_key, scope))
+            facts.extend(extract_prospectus_recovery_prediction_facts(pages, document_name, args.entity_key, scope))
             if args.association_facts:
                 try:
                     association_facts = _load_facts(args.association_facts)

@@ -571,6 +571,47 @@ def test_extract_command_persists_prospectus_market_terms_without_associations(t
     }
 
 
+def test_extract_command_routes_prospectus_recovery_prediction_pages(tmp_path: Path, capsys, monkeypatch) -> None:
+    source = tmp_path / "臻粹不良资产支持证券发行说明书.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    content = BytesIO()
+    writer.write(content)
+    source.write_bytes(content.getvalue())
+    calls = []
+    monkeypatch.setattr(
+        "npl_extract.cli.parse_native_pdf_isolated",
+        lambda *args, **kwargs: [PageContent(102, "", [Block("p102:b001", 102, "预测回收", None)])],
+    )
+
+    def fact(field_id: str, value: str | list[str]) -> ExtractionFact:
+        return ExtractionFact(
+            fact_id=f"recovery:{field_id}", field_id=field_id, entity_key="product:test", status=FactStatus.DISCLOSED, value=value,
+            evidence=[{"evidence_id": "p102:b001", "artifact_scope": "pypdf-test", "document_name": source.name, "physical_page": 102, "locator": "预测回收", "exact_text": "预测回收"}],
+        )
+
+    def recovery(*args):
+        calls.append(args)
+        return [
+            fact("chinabond_predicted_recovery_rate", "7.90"),
+            fact("chinabond_predicted_recovery_amount", "2.482766"),
+            fact("issuance_cashflow_forecast_agency", ["中债资信", "中诚信国际"]),
+        ]
+
+    monkeypatch.setattr("npl_extract.cli.extract_prospectus_recovery_prediction_facts", recovery)
+
+    exit_code = main(["extract", str(source), "--entity-key", "product:test", "--runs-dir", str(tmp_path / "runs")])
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert len(calls) == 1
+    assert {fact["field_id"]: fact["value"] for fact in output} == {
+        "chinabond_predicted_recovery_rate": "7.90",
+        "chinabond_predicted_recovery_amount": "2.482766",
+        "issuance_cashflow_forecast_agency": ["中债资信", "中诚信国际"],
+    }
+
+
 def test_extract_command_persists_a_participant_list_financing_entity(tmp_path: Path, capsys, monkeypatch) -> None:
     source = tmp_path / "臻粹不良资产支持证券发行说明书.pdf"
     writer = PdfWriter()
