@@ -115,6 +115,19 @@ npl-extract extract-folder <PDF文件夹> \
 
 跨文档派生字段会另存为以批次 SHA-256 命名的不可变候选工件；清单中的 `derived_facts_artifact` 是人工复核此类字段的唯一输入。
 
+### 离线复核网页
+
+如需逐条浏览证据并导出人工复核草稿，可从候选 JSONL 生成本地 HTML 页面：
+
+```bash
+npl-extract review-page \
+  --facts <候选结果.jsonl> \
+  --fields config/fields.v1.json \
+  --output <人工复核页面.html>
+```
+
+页面只导出 `accept`、`correct`、`reject` 草稿；正式确认仍必须使用下方的 `npl-extract review` 写入不可变 `ReviewDecision`。
+
 ## 6. 如何作出人工决定
 
 人工决定是追加的不可变事件，而不是修改原始候选：
@@ -135,7 +148,7 @@ npl-extract extract-folder <PDF文件夹> \
 
 - 由业务数据负责人签字冻结首个真实金标集；在此之前，不能声称模型准确率或自动确认质量。
 - 字段 4/5 的分类码表，以及字段 42“大额非分散”的阈值和布尔规则。
-- 字段 39 现金流归集表仍需在原生 x86 环境完成 PP-Structure 的表格/单元格坐标预检。
+- 字段 39 现金流归集表已由 PP-Structure p112–113 单元格坐标验证；人工复核应核对 37 月度行、合计和每行六条表头/数据单元格证据。
 - 期间收益率在本地材料没有唯一的实际 `2.00%` 原文，且现有契约尚未表达 `rate_type`；当前保持不填，避免猜测。
 
 ## 8. 人工签字前的最小清单

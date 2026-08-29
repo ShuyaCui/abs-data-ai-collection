@@ -29,6 +29,7 @@ from npl_extract.extract import (
 from npl_extract.parsers import parse_native_pdf_isolated, parser_identity
 from npl_extract.pipeline import persist_facts, persist_page_artifacts, persist_review_decision, stage_verified_pdf
 from npl_extract.review import review_fact
+from npl_extract.review_page import write_review_page
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -78,6 +79,10 @@ def main(argv: list[str] | None = None) -> int:
     review_command.add_argument("--reason-code", required=True)
     review_command.add_argument("--corrected-fact", type=Path)
     review_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    review_page_command = commands.add_parser("review-page", help="render an offline human-review page from candidate facts")
+    review_page_command.add_argument("--facts", type=Path, required=True)
+    review_page_command.add_argument("--fields", type=Path, required=True)
+    review_page_command.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.command == "extract-folder":
         return _extract_folder(args)
@@ -115,6 +120,14 @@ def main(argv: list[str] | None = None) -> int:
             print(_json({"error": str(error)}))
             return 2
         print(_json({**persisted.decision.model_dump(mode="json"), "path": str(persisted.path), "reused": persisted.reused}))
+        return 0
+    if args.command == "review-page":
+        try:
+            write_review_page(str(args.facts), str(args.fields), str(args.output))
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            print(_json({"error": str(error)}))
+            return 2
+        print(_json({"output": str(args.output)}))
         return 0
     if args.command == "extract-trustee" and not args.entity_key.startswith("report:"):
         print(_json([]))
@@ -248,10 +261,8 @@ def _extract_folder_locked(args: argparse.Namespace, input_dir: Path, output_pat
             continue
         document = queued[0]
         path = input_dir / document["document_name"]
-        parser = "docling-ocr" if role == "issuance_result" else "pypdf"
         try:
             staged = stage_verified_pdf(path, document["source_sha256"], args.runs_dir)
-            parser_id = parser_identity(parser)
             entity_key = f"report:{args.product_key.removeprefix('product:')}" if role == "trustee" else args.product_key
             extracted: list[ExtractionFact] = []
             ranges = {
@@ -265,11 +276,15 @@ def _extract_folder_locked(args: argparse.Namespace, input_dir: Path, output_pat
                     ((112, 113), extract_cashflow_collection_table_facts),
                 ],
             }[role]
-            document["parser"] = parser_id
+            document["parser"] = "ppstructure+pypdf" if role == "prospectus" else parser_identity("docling-ocr" if role == "issuance_result" else "pypdf")
             document["artifact_scopes"] = []
             for page_range, extractor in ranges:
+                parser = "ppstructure" if role == "prospectus" and page_range == (112, 113) else "docling-ocr" if role == "issuance_result" else "pypdf"
+                parser_id = parser_identity(parser)
                 scope = _scope(parser_id, page_range)
                 pages = parse_native_pdf_isolated(staged, parser=parser, expected_sha256=document["source_sha256"], page_range=page_range)
+                if parser == "ppstructure":
+                    scope = f"{scope}-{sha256(_json([asdict(page) for page in pages]).encode()).hexdigest()}"
                 if role == "prospectus" and page_range == (2, 3):
                     slice_facts = extract_prospectus_issue_amount_facts(pages, path.name, entity_key, scope)
                     slice_facts.extend(extract_prospectus_market_facts(pages, path.name, entity_key, scope))

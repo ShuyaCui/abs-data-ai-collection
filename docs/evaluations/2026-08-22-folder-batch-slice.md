@@ -28,8 +28,8 @@ Command:
   --product-key 'product:臻粹2026-2' \
   --product-name '臻粹2026年第二期不良资产' \
   --template 'data/42字段（测试）.xlsx' \
-  --output 'runs/sample/folder-candidate-extraction-v3.xlsx' \
-  --runs-dir 'runs/sample/folder-batch-runs-v3'
+  --output 'runs/sample/archive/pre-mvp-v0/folder-candidate-extraction-v3.xlsx' \
+  --runs-dir 'runs/sample/archive/pre-mvp-v0/folder-batch-runs-v3'
 ```
 
 Result: `32` candidate facts; `4` documents `processed`; trustee periods 1–3 `superseded`; `3` documents `unsupported`; no failures or ambiguity. The manifest records all ten source hashes, the chosen fourth trustee report, per-document evidence/fact artifacts, batch SHA-256 `47d5d9277622b50b0ca33b11ad97450b24c391c6daa3fa9736e7f20eedb3a7c6`, and the canonical derived-fact artifact.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -40,6 +41,35 @@ def test_parse_command_writes_evidence_artifacts(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert list((tmp_path / "runs").glob("*/pypdf-6-16-1-all/manifest.json"))
+
+
+def test_review_page_command_writes_an_offline_review_page(tmp_path: Path, capsys) -> None:
+    facts = tmp_path / "candidate.jsonl"
+    facts.write_text(
+        json.dumps(
+            {
+                "fact_id": "candidate:1",
+                "field_id": "asset_full_name",
+                "entity_key": "product:test",
+                "status": "disclosed",
+                "value": "测试产品",
+                "effective_at": None,
+                "evidence": [],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    fields = tmp_path / "fields.json"
+    fields.write_text(json.dumps({"fields": [{"id": "asset_full_name", "export_name": "资产全称"}], "supporting_fields": []}), encoding="utf-8")
+    output = tmp_path / "review.html"
+
+    exit_code = main(["review-page", "--facts", str(facts), "--fields", str(fields), "--output", str(output)])
+
+    assert exit_code == 0
+    assert output.is_file()
+    assert json.loads(capsys.readouterr().out) == {"output": str(output)}
 
 
 def test_extract_command_routes_an_issuance_result_document(tmp_path: Path, capsys) -> None:
@@ -151,7 +181,13 @@ def test_extract_folder_persists_cashflow_table_rows_from_coordinate_cells(tmp_p
         TableCell("p112:t001:r002:c001", 112, "p112:t001", 2, 1, "160.70", [1, 2, 2, 3]),
         TableCell("p112:t001:r002:c002", 112, "p112:t001", 2, 2, "0.65", [2, 2, 3, 3]),
     ])
-    monkeypatch.setattr("npl_extract.cli.parse_native_pdf_isolated", lambda *args, **kwargs: [PageContent(112, "现金流归集表", tables=[table])])
+    calls = []
+
+    def parse(*args, **kwargs):
+        calls.append((kwargs["parser"], kwargs["page_range"]))
+        return [PageContent(112, "现金流归集表", tables=[table])] if kwargs["parser"] == "ppstructure" else []
+
+    monkeypatch.setattr("npl_extract.cli.parse_native_pdf_isolated", parse)
 
     exit_code = main([
         "extract-folder", str(tmp_path), "--product-key", "product:test", "--product-name", "臻粹不良资产", "--template", str(template),
@@ -164,6 +200,8 @@ def test_extract_folder_persists_cashflow_table_rows_from_coordinate_cells(tmp_p
     assert [fact["entity_key"] for fact in facts] == ["cashflow_row:test:2026-01", "cashflow_row:test:total"]
     assert load_workbook(output)["现金流归集表"]["A2"].value == "2026-01"
     assert "cashflow_collection_table" not in manifest["field_statuses"]
+    assert ("ppstructure", (112, 113)) in calls
+    assert re.fullmatch(r"ppstructure-v3-paddleocr-[a-z0-9-]+-pages-112-113-[0-9a-f]{64}", facts[0]["evidence"][0]["artifact_scope"])
 
 
 def test_extract_folder_records_the_field39_runtime_blocker(tmp_path: Path, capsys) -> None:

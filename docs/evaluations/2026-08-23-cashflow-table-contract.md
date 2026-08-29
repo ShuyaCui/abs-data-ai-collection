@@ -22,23 +22,8 @@ Each monthly row is a `cashflow_row:` fact. A final `total` row retains both dis
 - The artifact pipeline version is `v4`; v3 empty `tables.jsonl` artifacts are deliberately rebuilt rather than reused.
 - Real p112–113 native-text extraction returns no Field 39 candidate (exit 3), which is the intended fail-closed result until cell coordinates exist. Native text is not relabelled as table-cell evidence.
 
-## Remaining environment gate
+## Real native macOS preflight — 2026-08-26
 
-The local host is Apple Silicon (`arm64`), and its Docker daemon is unavailable. Earlier `linux/amd64` emulation reached PP-Structure but OOM-killed table recognition, so no further emulation tuning is valid evidence.
-
-Run this on a native x86 Linux host with Docker and `pdftoppm`:
-
-```bash
-cd /path/to/上海国智-demo作业
-./docker/build-ppstructure.sh
-mkdir -p /tmp/npl-field39-x86
-pdftoppm -f 112 -l 113 -r 150 -png \
-  'data/臻粹2026年第二期不良资产证券_测试样例2/臻粹2026年第二期不良资产支持证券发行说明书.pdf' \
-  /tmp/npl-field39-x86/prospectus
-./docker/run-ppstructure-smoke.sh /tmp/npl-field39-x86/prospectus-112.png /tmp/npl-field39-x86/p112 112
-./docker/run-ppstructure-smoke.sh /tmp/npl-field39-x86/prospectus-113.png /tmp/npl-field39-x86/p113 113
-jq -s '[.[].cells[] | select(.column == 0) | .exact_text | gsub(" "; "") | select(test("^20[0-9]{2}年[0-9]{1,2}月$"))] | length == 37' \
-  /tmp/npl-field39-x86/p112/tables.jsonl /tmp/npl-field39-x86/p113/tables.jsonl
-```
-
-The final command must return `true`. The output must also contain the three-cell headers and `合计` row on p113 before the frozen MVP acceptance run is allowed.
+- On the Apple-Silicon host, PP-StructureV3 processed the real rendered p112–113 at 150 DPI with local model cache `runs/paddle-models`; it returned 3 raw table results on p112 and 1 on p113. The contract normalized the cash-flow tables to 51 and 69 coordinate-bearing cells respectively.
+- Real extraction emitted 38 facts: monthly `2026-01` through `2029-01` plus `total`. The final row retains disclosed `24,827.66` 万元 / `100.00%`, recomputed `24,827.67` 万元 / `99.99%`, and the calculated `0.185` tolerance.
+- The unified original-PDF batch produced `runs/sample/mvp-v0-field39-candidate.{jsonl,xlsx,manifest.json}`. Its independent rerun is byte-identical; the native-x86 Docker preflight is no longer an MVP gate. Native-x86 capacity benchmarking remains a later production concern, not an acceptance blocker.

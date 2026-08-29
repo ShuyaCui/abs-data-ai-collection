@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from contextlib import redirect_stdout
 from html.parser import HTMLParser
 from importlib.metadata import PackageNotFoundError, version
 import json
@@ -193,6 +194,44 @@ class DoclingNativeParser:
         return pages
 
 
+class PPStructureTableParser:
+    """Parse only requested PDF pages into PP-Structure table cells."""
+
+    def parse(self, path: Path, page_range: tuple[int, int] | None = None) -> list[PageContent]:
+        try:
+            import pypdfium2
+        except ImportError as error:
+            raise RuntimeError("install npl-extract[ocr] to use PP-Structure") from error
+
+        start, end = page_range or (1, len(PdfReader(path).pages))
+        document = pypdfium2.PdfDocument(str(path))
+        last_page = min(end, len(document))
+        if start > last_page:
+            return []
+        try:
+            from paddleocr import PPStructureV3
+        except ImportError as error:
+            raise RuntimeError("install npl-extract[ocr] to use PP-Structure") from error
+        with redirect_stdout(sys.stderr), tempfile.TemporaryDirectory() as image_dir:
+            pipeline = PPStructureV3(
+                device="cpu",
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
+                use_formula_recognition=False,
+                use_chart_recognition=False,
+                use_region_detection=False,
+            )
+            pages = []
+            for physical_page in range(start, last_page + 1):
+                image_path = Path(image_dir) / f"page-{physical_page}.png"
+                document[physical_page - 1].render(scale=150 / 72).to_pil().save(image_path)
+                prediction = next(iter(pipeline.predict(str(image_path))), None)
+                tables = tables_from_ppstructure_result(prediction.json, physical_page=physical_page) if prediction else []
+                pages.append(PageContent(physical_page, "", tables=tables, has_complex_table=bool(tables), ocr_requested=True))
+        return pages
+
+
 def parse_native_pdf_isolated(
     path: Path, *, parser: str = "pypdf", expected_sha256: str | None = None, page_range: tuple[int, int] | None = None, timeout_seconds: int = 120
 ) -> list[PageContent]:
@@ -240,6 +279,8 @@ def parser_identity(parser: str) -> str:
     try:
         if parser == "pypdf":
             return f"pypdf-{version('pypdf').replace('.', '-')}"
+        if parser == "ppstructure":
+            return f"ppstructure-v3-paddleocr-{version('paddleocr').replace('.', '-')}"
         identity = f"docling-{version('docling').replace('.', '-')}"
         if parser == "docling-ocr":
             identity += f"-rapidocr-{version('rapidocr').replace('.', '-')}"

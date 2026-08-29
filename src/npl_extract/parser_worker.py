@@ -6,12 +6,12 @@ from hashlib import sha256
 import json
 from pathlib import Path
 
-from npl_extract.parsers import DoclingNativeParser, PypdfNativeParser
+from npl_extract.parsers import DoclingNativeParser, PPStructureTableParser, PypdfNativeParser
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--parser", choices=["docling", "docling-ocr", "pypdf"], required=True)
+    parser.add_argument("--parser", choices=["docling", "docling-ocr", "ppstructure", "pypdf"], required=True)
     parser.add_argument("--expected-sha256")
     parser.add_argument("--page-start", type=int, default=1)
     parser.add_argument("--page-end", type=int)
@@ -23,7 +23,7 @@ def main() -> int:
         _limit_resources()
         if args.expected_sha256 and sha256(args.path.read_bytes()).hexdigest() != args.expected_sha256:
             raise RuntimeError("PARSER_INPUT_CHANGED: staged PDF hash does not match intake")
-        parser_class = {"docling": DoclingNativeParser, "docling-ocr": lambda: DoclingNativeParser(ocr=True), "pypdf": PypdfNativeParser}[args.parser]
+        parser_class = {"docling": DoclingNativeParser, "docling-ocr": lambda: DoclingNativeParser(ocr=True), "ppstructure": PPStructureTableParser, "pypdf": PypdfNativeParser}[args.parser]
         parser_instance = parser_class()
         pages = parser_instance.parse(args.path, (args.page_start, args.page_end or 2**63 - 1))
     except Exception as error:

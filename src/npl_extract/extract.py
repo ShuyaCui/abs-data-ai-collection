@@ -819,7 +819,10 @@ def extract_cashflow_collection_table_facts(
                 (
                     row
                     for row, cells in grouped.items()
-                    if tuple(_compact(cells.get(column).exact_text) if cells.get(column) else "" for column in range(3)) == _CASHFLOW_HEADERS
+                    if tuple(
+                        (_compact(cells.get(column).exact_text) if cells.get(column) else "").replace("（", "(").replace("）", ")")
+                        for column in range(3)
+                    ) == tuple(header.replace("（", "(").replace("）", ")") for header in _CASHFLOW_HEADERS)
                 ),
                 None,
             )

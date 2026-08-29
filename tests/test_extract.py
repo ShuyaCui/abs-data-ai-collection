@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from npl_extract.contracts import EvidenceRef, ExtractionFact, FactStatus
 from npl_extract.extract import (
     RecoveryComponent,
@@ -49,7 +51,8 @@ def test_derives_npl_recovery_from_disposal_rows_only() -> None:
     assert all("其他收入" not in evidence.locator for evidence in result.evidence)
 
 
-def test_extracts_cashflow_rows_from_parser_owned_table_cells() -> None:
+@pytest.mark.parametrize("ratio_header", ["预计回收金额占比（%）", "预计回收金额占比(%)"])
+def test_extracts_cashflow_rows_from_parser_owned_table_cells(ratio_header: str) -> None:
     pages = [
         PageContent(
             112,
@@ -61,7 +64,7 @@ def test_extracts_cashflow_rows_from_parser_owned_table_cells() -> None:
                     cells=[
                         TableCell("p112:t001:r000:c000", 112, "p112:t001", 0, 0, "期数", [0, 0, 1, 1]),
                         TableCell("p112:t001:r000:c001", 112, "p112:t001", 0, 1, "预计回收金额（万元）", [1, 0, 2, 1]),
-                        TableCell("p112:t001:r000:c002", 112, "p112:t001", 0, 2, "预计回收金额占比（%）", [2, 0, 3, 1]),
+                        TableCell("p112:t001:r000:c002", 112, "p112:t001", 0, 2, ratio_header, [2, 0, 3, 1]),
                         TableCell("p112:t001:r001:c000", 112, "p112:t001", 1, 0, "2026 年 1 月", [0, 1, 1, 2]),
                         TableCell("p112:t001:r001:c001", 112, "p112:t001", 1, 1, "160.70", [1, 1, 2, 2]),
                         TableCell("p112:t001:r001:c002", 112, "p112:t001", 1, 2, "0.65", [2, 1, 3, 2]),
@@ -79,7 +82,7 @@ def test_extracts_cashflow_rows_from_parser_owned_table_cells() -> None:
                     cells=[
                         TableCell("p113:t001:r000:c000", 113, "p113:t001", 0, 0, "期数", [0, 0, 1, 1]),
                         TableCell("p113:t001:r000:c001", 113, "p113:t001", 0, 1, "预计回收金额（万元）", [1, 0, 2, 1]),
-                        TableCell("p113:t001:r000:c002", 113, "p113:t001", 0, 2, "预计回收金额占比（%）", [2, 0, 3, 1]),
+                        TableCell("p113:t001:r000:c002", 113, "p113:t001", 0, 2, ratio_header, [2, 0, 3, 1]),
                         TableCell("p113:t001:r001:c000", 113, "p113:t001", 1, 0, "2027 年 5 月", [0, 1, 1, 2]),
                         TableCell("p113:t001:r001:c001", 113, "p113:t001", 1, 1, "708.67", [1, 1, 2, 2]),
                         TableCell("p113:t001:r001:c002", 113, "p113:t001", 1, 2, "2.85", [2, 1, 3, 2]),
