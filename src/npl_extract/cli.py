@@ -343,7 +343,11 @@ def _extract_folder_locked(args: argparse.Namespace, input_dir: Path, output_pat
     facts_path = output_path.with_suffix(".jsonl")
     manifest_path = output_path.with_suffix(".manifest.json")
     field_statuses = {}
-    if any(document.get("role") == "prospectus" and document["status"] in {"processed", "no_facts"} for document in documents) and not any(
+    if any(
+        document.get("role") == "prospectus"
+        and (document["status"] in {"processed", "no_facts"} or document.get("error_code") == "PARSER_EXTRA_MISSING")
+        for document in documents
+    ) and not any(
         fact.field_id == "cashflow_collection_table" for fact in facts
     ):
         field_statuses["cashflow_collection_table"] = {
