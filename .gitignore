@@ -12,3 +12,5 @@ runs/
 *.zip
 *.xlsx
 .env
+# Execution log
+docs/execution-log.md
