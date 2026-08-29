@@ -33,6 +33,10 @@ from npl_extract.review import review_fact
 from npl_extract.review_page import write_review_page
 
 
+def _add_native_parser_argument(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--native-parser", choices=["pypdf", "docling", "docling-ocr"], default="pypdf")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="npl-extract")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -41,21 +45,21 @@ def main(argv: list[str] | None = None) -> int:
     parse_command = commands.add_parser("parse", help="write native-text evidence artifacts for one local PDF")
     parse_command.add_argument("pdf", type=Path)
     parse_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
-    parse_command.add_argument("--native-parser", choices=["pypdf", "docling", "docling-ocr"], default="pypdf")
+    _add_native_parser_argument(parse_command)
     parse_command.add_argument("--pages", type=_page_range)
     parse_command.add_argument("--document-name")
     trustee_command = commands.add_parser("extract-trustee", help="extract deterministic trustee-report facts")
     trustee_command.add_argument("pdf", type=Path)
     trustee_command.add_argument("--entity-key", required=True)
     trustee_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
-    trustee_command.add_argument("--native-parser", choices=["pypdf", "docling", "docling-ocr"], default="pypdf")
+    _add_native_parser_argument(trustee_command)
     trustee_command.add_argument("--pages", type=_page_range)
     trustee_command.add_argument("--document-name")
     extract_command = commands.add_parser("extract", help="extract deterministic facts for one supported PDF")
     extract_command.add_argument("pdf", type=Path)
     extract_command.add_argument("--entity-key")
     extract_command.add_argument("--runs-dir", type=Path, default=Path("runs"))
-    extract_command.add_argument("--native-parser", choices=["pypdf", "docling", "docling-ocr"], default="pypdf")
+    _add_native_parser_argument(extract_command)
     extract_command.add_argument("--pages", type=_page_range)
     extract_command.add_argument("--document-name")
     extract_command.add_argument("--association-facts", type=Path, nargs="+")

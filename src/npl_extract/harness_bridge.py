@@ -76,6 +76,27 @@ def _externalize_facts(facts: list[dict[str, object]], payload: dict[str, object
     return facts
 
 
+def _evidence_excerpt(evidence: dict[str, object], max_text_chars: int | None) -> dict[str, object]:
+    excerpt = dict(evidence)
+    if max_text_chars is not None and isinstance(excerpt.get("exact_text"), str) and len(excerpt["exact_text"]) > max_text_chars:
+        excerpt["exact_text"] = excerpt["exact_text"][:max_text_chars]
+        excerpt["truncated"] = True
+    return excerpt
+
+
+def _canonical_fact_matches(run_dir: Path, fact_ids: set[str]) -> dict[str, list[dict[str, object]]]:
+    matches: dict[str, list[dict[str, object]]] = {}
+    for path in (run_dir / "facts").glob("*.jsonl"):
+        content = path.read_bytes()
+        if sha256(content).hexdigest() != path.stem:
+            continue
+        for item in _jsonl(path):
+            fact_id = item.get("fact_id")
+            if fact_id in fact_ids:
+                matches.setdefault(fact_id, []).append(item)
+    return matches
+
+
 def retrieve_evidence(payload: dict[str, object]) -> dict[str, object]:
     run_dir = _run_dir(payload)
     scope_dir = _scope_dir(run_dir, payload.get("scope"))
@@ -87,19 +108,11 @@ def retrieve_evidence(payload: dict[str, object]) -> dict[str, object]:
         raise ValueError("max_text_chars must be a positive integer")
     for evidence in _jsonl(scope_dir / "blocks.jsonl"):
         if evidence.get("evidence_id") == evidence_id:
-            excerpt = dict(evidence)
-            if max_text_chars is not None and isinstance(excerpt.get("exact_text"), str) and len(excerpt["exact_text"]) > max_text_chars:
-                excerpt["exact_text"] = excerpt["exact_text"][:max_text_chars]
-                excerpt["truncated"] = True
-            return {"operation": "retrieve_evidence", "status": "ok", "result": {"scope": scope_dir.name, "evidence": excerpt}}
+            return {"operation": "retrieve_evidence", "status": "ok", "result": {"scope": scope_dir.name, "evidence": _evidence_excerpt(evidence, max_text_chars)}}
     for table in _jsonl(scope_dir / "tables.jsonl"):
         for cell in table.get("cells", []):
             if isinstance(cell, dict) and cell.get("evidence_id") == evidence_id:
-                excerpt = dict(cell)
-                if max_text_chars is not None and isinstance(excerpt.get("exact_text"), str) and len(excerpt["exact_text"]) > max_text_chars:
-                    excerpt["exact_text"] = excerpt["exact_text"][:max_text_chars]
-                    excerpt["truncated"] = True
-                return {"operation": "retrieve_evidence", "status": "ok", "result": {"scope": scope_dir.name, "evidence": excerpt}}
+                return {"operation": "retrieve_evidence", "status": "ok", "result": {"scope": scope_dir.name, "evidence": _evidence_excerpt(cell, max_text_chars)}}
     return {"operation": "retrieve_evidence", "status": "not_found", "result": {"evidence_id": evidence_id}}
 
 
@@ -155,16 +168,10 @@ def validate_facts(payload: dict[str, object]) -> dict[str, object]:
     if not isinstance(fact_ids, list) or not fact_ids or not all(isinstance(fact_id, str) for fact_id in fact_ids):
         raise ValueError("fact_ids must be a non-empty string array")
     matches: dict[str, ExtractionFact] = {}
-    for path in (run_dir / "facts").glob("*.jsonl"):
-        content = path.read_bytes()
-        if sha256(content).hexdigest() != path.stem:
-            continue
-        for line in content.decode("utf-8").splitlines():
-            fact = ExtractionFact.model_validate(json.loads(line))
-            if fact.fact_id in fact_ids:
-                if fact.fact_id in matches:
-                    raise ValueError(f"candidate fact {fact.fact_id} is ambiguous")
-                matches[fact.fact_id] = fact
+    for candidate_id, candidates in _canonical_fact_matches(run_dir, set(fact_ids)).items():
+        if len(candidates) > 1:
+            raise ValueError(f"candidate fact {candidate_id} is ambiguous")
+        matches[candidate_id] = ExtractionFact.model_validate(candidates[0])
     if set(matches) != set(fact_ids):
         raise ValueError("candidate facts must be canonical artifacts for the specified document")
     facts = [matches[fact_id] for fact_id in fact_ids]
@@ -202,12 +209,8 @@ def request_review(payload: dict[str, object]) -> dict[str, object]:
     fact_id = payload.get("fact_id")
     if not isinstance(fact_id, str):
         raise ValueError("fact_id must be a string")
-    for path in (run_dir / "facts").glob("*.jsonl"):
-        content = path.read_bytes()
-        if sha256(content).hexdigest() != path.stem:
-            continue
-        if any(item.get("fact_id") == fact_id for item in _jsonl(path)):
-            return {"operation": "request_review", "status": "review_required", "result": {"candidate_fact_id": fact_id}}
+    if _canonical_fact_matches(run_dir, {fact_id}).get(fact_id):
+        return {"operation": "request_review", "status": "review_required", "result": {"candidate_fact_id": fact_id}}
     return {"operation": "request_review", "status": "not_found", "result": {"fact_id": fact_id}}
 
 
